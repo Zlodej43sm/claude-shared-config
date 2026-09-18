@@ -1,0 +1,38 @@
+{
+  "mcpServers": {
+    "atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "JIRA_URL": "${JIRA_BASE_URL}",
+        "JIRA_USERNAME": "${JIRA_EMAIL}",
+        "JIRA_API_TOKEN": "${JIRA_API_TOKEN}",
+        "CONFLUENCE_URL": "${CONFLUENCE_BASE_URL}",
+        "CONFLUENCE_USERNAME": "${JIRA_EMAIL}",
+        "CONFLUENCE_API_TOKEN": "${JIRA_API_TOKEN}",
+        "ENABLED_TOOLS": "jira_get_issue,jira_search,confluence_get_page,confluence_search"
+      }
+    },
+    "sonarqube": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--init",
+        "-i",
+        "--rm",
+        "-e",
+        "SONARQUBE_TOKEN",
+        "-e",
+        "SONARQUBE_ORG",
+        "-e",
+        "SONARQUBE_URL",
+        "mcp/sonarqube"
+      ],
+      "env": {
+        "SONARQUBE_TOKEN": "${SONAR_API_TOKEN}",
+        "SONARQUBE_ORG": "${SONAR_ORG:-levelaccess}",
+        "SONARQUBE_URL": "${SONAR_URL:-https://sonarcloud.io}"
+      }
+    }
+  }
+}
