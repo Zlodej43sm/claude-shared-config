@@ -50,7 +50,7 @@ Invoked as `/<skill-name>` (or by the natural-language triggers noted below), un
 | `implement` | Architect/staff-dev skill: fetches a Jira ticket and linked Confluence docs, reads related repos if provided, and produces a detailed implementation plan in `.claude/plans/` for approval before any code is written. | `/implement <ticket-key> [-- <repo1> [<repo2> ...]]` |
 | `pr-review` | Reviews a Bitbucket PR (by number, URL, or branch): batch-fetches every linked Jira ticket / Confluence page, asks about cross-service dependencies, then delegates to the `pr-reviewer` agent for a full structured review. | `/pr-review <pr-number \| url \| branch>` |
 | `security-audit` | Scans a Claude Code config tree (skills/agents/tools/hooks/workflows, `mcp.json`, `settings.json`, env templates) for hardcoded secrets, project-specific identifiers, values that belong in a project-local `.env`, and overly-broad tool/permission scopes. Read-only. | `/security-audit [path]` |
-| `sonar-triage` | Fetches and triages SonarQube Cloud issues (PR, branch, or main) and proposes a fix for each, aware of this repo's known false-positive classes. Analysis only. | `/sonar-triage [pr <number> \| branch <name> \| main]` |
+| `sonar-triage` | Fetches and triages SonarQube Cloud issues (PR, branch, or main) and proposes a fix for each, checking a project-local `.claude/sonar-known-issues.md` (if present) for confirmed false positives. Analysis only. | `/sonar-triage [pr <number> \| branch <name> \| main]` |
 | `split-pr` | Analyzes a large/complex PR or branch and proposes how to split it into smaller, dependency-ordered (stacked) PRs. Analysis only unless `--apply` is passed. | `/split-pr [<pr-identifier> \| <branch>] [--base=<branch>] [--apply] [--interactive]` |
 
 ## Agents

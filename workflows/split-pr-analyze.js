@@ -65,7 +65,7 @@ Steps:
 2. For every file returned (skip pure renames/copies with an empty diff), read its actual diff: git diff ${baseRef}...${headRef} -- <file>. If a file's diff is very large, read it in slices rather than skipping it.
 3. For every changed file, classify each DIFF HUNK — not necessarily the whole file — using the schema below. A file that bundles two unrelated changes (e.g. a mechanical rename plus an unrelated bugfix in the same file) must get two different "concern" labels, one per hunk, not one label for the whole file.
 4. Deleted files, renamed files, and pure comment/doc-link fixes still need a concern label — deletions are frequently the other half of a rewrite happening in a different file.
-5. Note every cross-package import you see in this slice (an import of a symbol from another @findfix/* package). If that imported symbol is newly added in this same diff (not already on ${baseRef}), that is an ordering constraint: this concern cannot land before the concern that adds that symbol.
+5. Note every cross-package import you see in this slice (an import of a symbol from another package in this workspace, e.g. via a scoped import like \`@scope/pkg\`). If that imported symbol is newly added in this same diff (not already on ${baseRef}), that is an ordering constraint: this concern cannot land before the concern that adds that symbol.
 
 Known import-graph signal already computed deterministically for this diff (cross-check your findings against it, don't contradict it without a specific reason):
 ${importGraphSummary || '(none computed)'}

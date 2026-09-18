@@ -1,6 +1,6 @@
 ---
 name: split-pr
-description: Analyze a large or complex pull request / branch and propose how to split it into smaller, dependency-ordered (stacked) pull requests, tailored to this repo's pnpm-workspace + TS-project-reference + Temporal/Kafka + Bitbucket stack. Analysis only — never creates branches, commits, or PRs unless the user explicitly asks in a separate instruction. Self-improving: reads and appends to LESSONS.md. `--interactive` turns the PR-count decision into a propose → confirm/adjust loop with the user instead of a single fixed split. Usage: /split-pr [<pr-identifier> | <branch>] [--base=<branch>] [--apply] [--interactive]
+description: Analyze a large or complex pull request / branch and propose how to split it into smaller, dependency-ordered (stacked) pull requests, using a Bitbucket + pnpm-workspace + TS-project-reference monorepo as the default assumption (deterministic import-graph tooling; set `PACKAGE_SCOPE` for a workspace scope other than this repo's). Analysis only — never creates branches, commits, or PRs unless the user explicitly asks in a separate instruction. Self-improving: reads and appends to LESSONS.md. `--interactive` turns the PR-count decision into a propose → confirm/adjust loop with the user instead of a single fixed split. Usage: /split-pr [<pr-identifier> | <branch>] [--base=<branch>] [--apply] [--interactive]
 ---
 
 # split-pr — large-PR split planner
@@ -31,7 +31,12 @@ Produces a plan for splitting an oversized PR/branch into smaller, reviewable, c
 
 ## Step 0 — Load lessons
 
-Read `.claude/skills/split-pr/LESSONS.md` in full. Its content gets threaded into every classification agent's prompt (Step 3) and must inform the synthesis (Step 5) — e.g. its list of files that habitually bundle unrelated hunks tells you where to look extra carefully; its note on stale ticket citations tells you not to trust a commit's `MA-\d+` reference at face value.
+Read two lesson sources in full and concatenate them (shared first, then project-local) into the `lessons` text used below:
+
+1. `.claude/skills/split-pr/LESSONS.md` — shared across every project that links this config repo (it's a symlink back into the shared repo). Generic, cross-repo lessons only: universal splitting heuristics, script bugs and their fixes. Never append repo-specific incident detail here (see "Capture corrections").
+2. `.claude/reviews/split-pr-lessons.local.md` — project-local, not part of the shared config repo. Read it if it exists; skip silently if it doesn't (no run has captured a repo-specific lesson yet). This is where real package names, ticket numbers, and incident narratives belong.
+
+The combined text gets threaded into every classification agent's prompt (Step 3) and must inform the synthesis (Step 5) — e.g. a note on files that habitually bundle unrelated hunks tells you where to look extra carefully; a note on stale ticket citations tells you not to trust a commit's ticket-key reference at face value.
 
 ## Step 1 — Resolve target and scope
 
@@ -72,7 +77,7 @@ Workflow({
     baseRef: BASE_REF,
     headRef: HEAD_REF,
     groups: [{ key, paths, hint? }, ...],
-    lessons: <full text of LESSONS.md from Step 0>,
+    lessons: <combined lessons text from Step 0>,
     importGraphSummary: <per-group edge summary>,
   }
 })
@@ -139,12 +144,12 @@ Tell the user the file path. Do not also paste the entire plan into chat if it's
 
 ## Step 7 — Adversarial self-critique (self-improvement — runs every time, not only on complaint)
 
-Put the draft plan on trial before showing it to the user, instead of waiting for them to catch a mistake. Spawn 2-3 independent critic agents in parallel via the `Agent` tool (fresh/general-purpose, **not** forks — they must not inherit your synthesis reasoning or they'll just agree with it). Give each critic only: the draft plan file's contents, the diff range (`BASE_REF...HEAD_REF`), the full `LESSONS.md` text, and Step 2's import-graph JSON. Instruct each to try to REFUTE the plan, specifically checking:
+Put the draft plan on trial before showing it to the user, instead of waiting for them to catch a mistake. Spawn 2-3 independent critic agents in parallel via the `Agent` tool (fresh/general-purpose, **not** forks — they must not inherit your synthesis reasoning or they'll just agree with it). Give each critic only: the draft plan file's contents, the diff range (`BASE_REF...HEAD_REF`), the combined lessons text from Step 0, and Step 2's import-graph JSON. Instruct each to try to REFUTE the plan, specifically checking:
 
 - Does every edge cited in "Verdict on any split the user proposed" and the "Tracks" table actually appear in the import-graph JSON or a hunk a classification agent reported — not just asserted?
 - Is any file assigned wholly to one concern/track when its actual diff contains hunks from 2+ concerns?
 - Does any concern touching `packages/core/src/env.ts` land without its paired `.env.example`/`docs/DEPLOY.md` hunk in the same track?
-- Does the plan repeat a mistake `LESSONS.md` already warns about, or ignore a non-empty `reference_mismatches`?
+- Does the plan repeat a mistake the lessons text already warns about, or ignore a non-empty `reference_mismatches`?
 - Is the dependency order actually a valid topological sort of the DAG, or does some track depend on a later one?
 - For any concern that **deletes** an exported symbol: does the plan claim (or assume) that concern is independently landable? If so, that claim is unverified until someone actually runs a build with only that concern's changes applied on top of the base branch — reading imports only catches *forward* dependencies (what new code needs), never *reverse* ones (unmigrated old code elsewhere in the repo that still imports the symbol being deleted). Flag any such unverified claim explicitly rather than trusting it.
 
@@ -152,7 +157,7 @@ A critique counts as **CONFIRMED** only when the critic cites a specific file, h
 
 For every CONFIRMED finding:
 1. Correct the plan file in place before presenting it.
-2. Append a new dated entry to `LESSONS.md` per "Capture corrections" below — phrase it as a general rule that would catch this class of mistake on a *different* diff, not a restatement of this one instance.
+2. Capture a new dated lesson per "Capture corrections" below — phrase it as a general rule that would catch this class of mistake on a *different* diff, not a restatement of this one instance.
 
 Mention in the chat summary (not necessarily the plan file) how many critique findings were confirmed and fixed, if any — silently correcting the plan without saying so hides a real mistake the user should know almost happened.
 
@@ -177,7 +182,13 @@ Only run this section when explicitly asked, in words, to create the branches/co
 
 ## Capture corrections (self-improvement)
 
-This is the fallback path for mistakes that slip past Step 7's critique pass or only surface later (e.g. after `--apply`, or from user domain knowledge no critic had). Whenever the user reports that a run's output was wrong, incomplete, or (after applying) broke a build — append a new dated entry to `.claude/skills/split-pr/LESSONS.md` under a `## YYYY-MM-DD` heading, following the existing entries' style: concrete, phrased as a rule, not a narrative. Do this **before** re-running any part of the analysis for the user, so the correction is captured even if you get interrupted. If the correction is generic Workflow-script or import-graph-script behavior (not repo-specific), edit `.claude/workflows/split-pr-analyze.js` or `.claude/tools/import_graph.sh` directly instead of/in addition to noting it in LESSONS.md — the lessons file is for repo-specific judgment calls the *script* can't encode; a systematic script bug belongs in the script.
+This is the fallback path for mistakes that slip past Step 7's critique pass or only surface later (e.g. after `--apply`, or from user domain knowledge no critic had). Whenever the user reports that a run's output was wrong, incomplete, or (after applying) broke a build — capture a new dated entry under a `## YYYY-MM-DD` heading, following the existing entries' style: concrete, phrased as a rule, not a narrative. Do this **before** re-running any part of the analysis for the user, so the correction is captured even if you get interrupted.
+
+Where the entry goes depends on what kind of lesson it is:
+
+- **Repo-specific judgment call** (real package names, real ticket numbers, an incident narrative tied to this codebase) — append it to `.claude/reviews/split-pr-lessons.local.md` (create the file, and `.claude/reviews/` if needed, on first use). **Never** append repo-specific detail to `.claude/skills/split-pr/LESSONS.md` — that path is a symlink back into the shared config repo, so a write there would leak this project's package names, ticket numbers, and incidents into every other project that links the same config.
+- **Generic, cross-repo splitting heuristic** that would help on any pnpm/TS-project-reference workspace, independent of this project's specifics — append it to the shared `.claude/skills/split-pr/LESSONS.md` instead. Since that file is shared, treat editing it as a deliberate, separate action in the shared config repo (confirm the lesson really generalizes before writing it there), not a routine per-run side effect.
+- **Systematic script bug** (Workflow-script or import-graph-script behavior, not repo-specific judgment) — edit `.claude/workflows/split-pr-analyze.js` or `.claude/tools/import_graph.sh` directly instead of, or in addition to, noting it in a lessons file.
 
 ## Constraints
 

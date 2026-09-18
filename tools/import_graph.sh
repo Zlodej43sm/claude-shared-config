@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# import_graph — cross-package @findfix/* import edges + tsconfig/package.json
+# import_graph — cross-package scoped-import edges + tsconfig/package.json
 # reference-sync check between the files changed in a diff range.
 #
 # Used by the split-pr skill to find out which "concerns" in a large diff
@@ -8,37 +8,45 @@
 # no LLM call — because it is a mechanical grep+parse job and getting the
 # dependency direction wrong here silently produces a broken split order.
 #
+# Assumes a pnpm-style workspace of packages published under one npm scope
+# (e.g. "@myorg/pkg-a" importing "@myorg/pkg-b"). The scope is resolved from
+# $PACKAGE_SCOPE if set, else auto-detected from a touched package's own
+# package.json "name" field. If neither yields a scope, edges/reference_mismatches
+# come back empty rather than matching the wrong workspace's packages.
+#
 # SCHEMA_IN
-#   $1  BASE_REF   e.g. develop or origin/develop
-#   $2  HEAD_REF   e.g. feat/MA-207 (defaults to HEAD if omitted)
+#   $1  BASE_REF        e.g. develop or origin/develop
+#   $2  HEAD_REF         e.g. feat/some-branch (defaults to HEAD if omitted)
+#   env PACKAGE_SCOPE   optional — npm scope without the "@", e.g. "myorg"
 #
 # SCHEMA_OUT  stdout  JSON {
-#   "changed_files": ["packages/pipeline/src/activities.ts", ...],
-#   "packages_touched": ["pipeline", "remediation", ...],
+#   "changed_files": ["packages/pkg-a/src/activities.ts", ...],
+#   "packages_touched": ["pkg-a", "pkg-b", ...],
 #   "edges": [
-#     {"file": "packages/pipeline/src/activities.ts", "from_package": "pipeline",
-#      "imports_package": "remediation", "specifiers": ["emitLibraryScript", "formatScript"]}
+#     {"file": "packages/pkg-a/src/activities.ts", "from_package": "pkg-a",
+#      "imports_package": "pkg-b", "specifiers": ["doThing", "formatThing"]}
 #   ],
 #   "intra_package_edges": [
-#     {"file": "packages/pipeline/src/kafka/workflowClient.ts",
-#      "target_file": "packages/pipeline/src/workflows.ts", "package": "pipeline",
-#      "specifiers": ["FindFixWorkflow"], "value_import": true}
+#     {"file": "packages/pkg-a/src/kafka/workflowClient.ts",
+#      "target_file": "packages/pkg-a/src/workflows.ts", "package": "pkg-a",
+#      "specifiers": ["SomeWorkflow"], "value_import": true}
 #   ],
 #   "reference_mismatches": [
-#     {"package": "pipeline",
-#      "issue": "package.json depends on @findfix/remediation but tsconfig.json has no matching project reference"}
+#     {"package": "pkg-a",
+#      "issue": "package.json depends on @myorg/pkg-b but tsconfig.json has no matching project reference"}
 #   ]
 # }
 #
-# `edges` covers cross-package (@findfix/*) imports AND re-exports (an
-# `export {X} from '@findfix/pkg'` creates the same build-ordering dependency
+# `edges` covers cross-package (same-scope) imports AND re-exports (an
+# `export {X} from '@scope/pkg'` creates the same build-ordering dependency
 # as an import). `intra_package_edges` covers relative imports (`./x`, `../x`)
 # between two files that are BOTH changed in this diff and in the SAME
-# package — this repo builds each package as one `tsc -b` unit, so splitting
-# such a pair across two PRs can leave the earlier one uncompilable even
-# though no @findfix/* edge exists between them. `value_import: false` means
-# the import was `import type`/`export type` (erased at build time — a lower-
-# risk ordering constraint than a value import, but still worth checking).
+# package — a `tsc -b`-per-package workspace builds each package as one unit,
+# so splitting such a pair across two PRs can leave the earlier one
+# uncompilable even though no cross-package edge exists between them.
+# `value_import: false` means the import was `import type`/`export type`
+# (erased at build time — a lower-risk ordering constraint than a value
+# import, but still worth checking).
 #
 # EXIT  0=ok  1=bad-args  2=git-error
 
@@ -92,21 +100,46 @@ def show(ref, path):
     )
     return result.stdout if result.returncode == 0 else None
 
-# Matches both `import {X} from '@findfix/pkg'` and `export {X} from '@findfix/pkg'`
+def resolve_package_scope() -> str:
+    """The npm scope this workspace's packages publish under (e.g. 'acme' for
+    '@acme/pkg'). Overridable via $PACKAGE_SCOPE. Auto-detected from a touched
+    package's own package.json 'name' field when unset, so this script isn't
+    hardcoded to one workspace's scope."""
+    env_scope = __import__("os").environ.get("PACKAGE_SCOPE", "").strip()
+    if env_scope:
+        return env_scope
+    for pkg in packages_touched:
+        raw = show(head_ref, f"packages/{pkg}/package.json")
+        if not raw:
+            continue
+        try:
+            name = json.loads(raw).get("name", "")
+        except json.JSONDecodeError:
+            continue
+        if name.startswith("@") and "/" in name:
+            return name[1:].split("/", 1)[0]
+    return ""
+
+PACKAGE_SCOPE = resolve_package_scope()
+
+# Matches both `import {X} from '@<scope>/pkg'` and `export {X} from '@<scope>/pkg'`
 # (a re-export creates the exact same build-ordering dependency as an import, but a
 # plain "import"-only regex misses it — see LESSONS.md's git-ops/scriptSafety entry).
-FINDFIX_IMPORT_RE = re.compile(
+# Matches nothing if PACKAGE_SCOPE couldn't be resolved (no touched package.json has
+# a scoped name and $PACKAGE_SCOPE wasn't set) — cross-package edges degrade to an
+# empty list rather than silently matching the wrong scope.
+SCOPED_IMPORT_RE = re.compile(
     r"(?:import|export)\s+(?:type\s+)?"
     r"(?:\{([^}]*)\}|([A-Za-z_$][\w$]*))"
-    r"\s+from\s+['\"]@findfix/([a-zA-Z0-9_-]+)['\"]",
+    r"\s+from\s+['\"]@" + re.escape(PACKAGE_SCOPE) + r"/([a-zA-Z0-9_-]+)['\"]",
     re.DOTALL,
-)
+) if PACKAGE_SCOPE else None
 
 # Matches `import`/`export` ... `from './relative'` or `'../relative'` — used to
 # catch INTRA-package ordering constraints (see below): this repo builds each
 # package as one `tsc -b` unit, so a relative import between two files that are
 # both changed in this diff can force one to land before the other even though
-# they're in the same @findfix/* package and never show up as a cross-package edge.
+# they're in the same @<scope>/* package and never show up as a cross-package edge.
 RELATIVE_IMPORT_RE = re.compile(
     r"(import|export)\s+(type\s+)?"
     r"(?:\{([^}]*)\}|([A-Za-z_$][\w$]*))"
@@ -153,7 +186,7 @@ for f in changed_files:
     if content is None:
         continue
 
-    for named, default, imported_pkg in FINDFIX_IMPORT_RE.findall(content):
+    for named, default, imported_pkg in (SCOPED_IMPORT_RE.findall(content) if SCOPED_IMPORT_RE else []):
         if imported_pkg not in packages_touched or imported_pkg == from_package:
             continue
         specifiers = parse_specifiers(named, default)
@@ -202,16 +235,17 @@ for pkg in packages_touched:
         continue
 
     deps = {**pkg_json.get("dependencies", {}), **pkg_json.get("devDependencies", {})}
-    findfix_deps = {d.split("/", 1)[1] for d in deps if d.startswith("@findfix/")}
+    scope_prefix = f"@{PACKAGE_SCOPE}/" if PACKAGE_SCOPE else None
+    scoped_deps = {d.split("/", 1)[1] for d in deps if scope_prefix and d.startswith(scope_prefix)}
     ref_paths = {
         r.get("path", "").split("/")[-1]
         for r in tsconfig.get("references", [])
         if isinstance(r, dict)
     }
-    for dep in sorted(findfix_deps - ref_paths):
+    for dep in sorted(scoped_deps - ref_paths):
         reference_mismatches.append({
             "package": pkg,
-            "issue": f"package.json depends on @findfix/{dep} but tsconfig.json has no matching project reference",
+            "issue": f"package.json depends on @{PACKAGE_SCOPE}/{dep} but tsconfig.json has no matching project reference",
         })
 
 print(json.dumps({

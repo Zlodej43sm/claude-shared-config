@@ -1,10 +1,17 @@
-# split-pr — accumulated lessons
+# split-pr — accumulated lessons (shared, cross-repo)
 
-Read this file **first** on every run (Step 0 of `SKILL.md`) and pass its full
-text into every `split-pr-analyze` classification agent and into the
-synthesis step. This is the skill's self-improvement mechanism: it has no
-other memory between runs, so a lesson not written here is a lesson the next
-run will not have.
+This file is symlinked into every project that links this config repo, so it
+must only hold **generic, cross-repo** lessons — universal splitting
+heuristics, script bugs and their fixes. Repo-specific judgment calls (real
+package names, ticket numbers, incident narratives) belong in that project's
+own `.claude/reviews/split-pr-lessons.local.md` instead — see "Capture
+corrections" in `SKILL.md`.
+
+Read this file **first** on every run (Step 0 of `SKILL.md`), alongside the
+project-local file, and pass the combined text into every `split-pr-analyze`
+classification agent and into the synthesis step. This is the skill's
+self-improvement mechanism: it has no other memory between runs, so a lesson
+not written down is a lesson the next run will not have.
 
 Append a new dated entry per the "Capture corrections" step in `SKILL.md`
 whenever a run's output turns out wrong, incomplete, or (if a split was
@@ -12,6 +19,16 @@ applied) caused a broken build. Each entry: dated, concrete, phrased as a
 rule to apply next time — not a narrative of what happened. Do not delete old
 entries even if they look obvious in hindsight; another run is what makes
 them obvious.
+
+> **Note on the entries below:** they were all captured before this file was
+> split from the project-local lessons file, and most are tied to one
+> specific project's real package names and ticket numbers (e.g. `@findfix/*`,
+> `MA-207`) rather than being generic. They're left in place rather than
+> deleted (per the rule above, and because they're still useful to whoever
+> owns that project), but if you're linking this config repo into a
+> **different** project, treat them as reference examples of the lesson
+> *style* to follow, not as facts about your codebase — and prefer moving them
+> to that project's own `.claude/reviews/split-pr-lessons.local.md` over time.
 
 ## 2026-09-17 — seeded from the manual MA-207 split analysis that designed this skill
 

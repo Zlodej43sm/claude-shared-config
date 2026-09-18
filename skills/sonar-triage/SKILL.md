@@ -1,6 +1,6 @@
 ---
 name: sonar-triage
-description: Fetch and triage SonarQube Cloud issues for this repo's project — on a PR, a branch, or the main branch — and propose a fix for each. Knows this repo's known false-positive classes (serialized browser runtimes) so it does not propose changes that break the build. Analysis only; never edits code unless the user explicitly asks. Usage: /sonar-triage [pr <number> | branch <name> | main]
+description: Fetch and triage SonarQube Cloud issues for this repo's project — on a PR, a branch, or the main branch — and propose a fix for each. Checks a project-local `.claude/sonar-known-issues.md` (if present) for confirmed false-positive rules so it does not propose changes that break the build. Analysis only; never edits code unless the user explicitly asks. Usage: /sonar-triage [pr <number> | branch <name> | main]
 ---
 
 # sonar-triage — SonarQube Cloud issue triage
@@ -24,8 +24,8 @@ Never hardcode the org or project key. Resolve them, in order:
 | Base URL | `$SONAR_URL` (default `https://sonarcloud.io`) |
 | Token | `$SONAR_API_TOKEN`, synced from `.claude/.env` by the `sync-env.py` SessionStart hook |
 
-Read the project key from the repo, not from memory — this skill is used across
-several `art-platform-*` repos and each has its own key.
+Read the project key from the repo, not from memory — this skill is shared
+across every project that links this config repo, and each has its own key.
 
 **Never echo `$SONAR_API_TOKEN`** into output, a commit, or a file.
 
@@ -43,12 +43,11 @@ zero issues, which reads as "clean" when it is not. Resolve scope in this order:
 Before reporting "no issues", confirm the scope was actually analyzed
 (`list_branches` / `list_pull_requests` show an `analysisDate`). A project with
 zero analyses reports zero issues and a quality gate of `NONE` — that is
-"never measured", not "clean". Report those as different findings.
-
-> As of 2026-08-24 the `develop` main branch of `art-platform-findfix` had **never been
-> analyzed** — `bitbucket-pipelines.yml` runs the SonarCloud step only in the PR
-> pipeline. All real data lives on PR scopes. Re-check rather than assuming this
-> is still true.
+"never measured", not "clean". Report those as different findings — some
+repos only run the SonarCloud step in the PR pipeline, so their main/default
+branch is never independently analyzed and all real data lives on PR scopes;
+don't assume this without checking `bitbucket-pipelines.yml` (or the repo's
+CI config) for this run.
 
 ## Procedure
 
@@ -83,51 +82,38 @@ zero analyses reports zero issues and a quality gate of `NONE` — that is
 6. Group by rule, then triage each group against the known false positives below.
 7. Emit the report.
 
-## Known false-positive classes in this repo
+## Known false-positive classes
 
-Check these **before** suggesting a fix. Proposing them is worse than silence —
-they break the build in ways unit tests do not catch.
+This shared skill does not hardcode any project's known false-positive rules —
+those are one specific codebase's structural exceptions (e.g. "this function
+must stay self-contained because it gets serialized and injected elsewhere"),
+not something every project linking this config repo shares. Before triaging,
+check for a project-local file:
 
-### `typescript:S7721` "Move function to the outer scope" in `packages/a11y-runtime/**`
+`$PROJECT_ROOT/.claude/sonar-known-issues.md`
 
-**Do not fix. This rule is invalid for this package.**
+If it exists, read it in full and check every flagged rule against its entries
+**before** suggesting a fix — treat them with the same authority this section
+used to have inline (proposing a fix for a documented false positive is worse
+than silence: it can break the build in ways unit tests don't catch). If the
+file doesn't exist, there are no known false positives recorded for this
+project yet — triage every issue on its own merits, and suggest the user
+capture one in that file the first time you confirm a real false positive
+together, using this format:
 
-`installLocatorRuntime` and `installApplier` are each ONE self-contained function
-that is serialized with `Function.prototype.toString()` and injected into a live
-page (via `page.addInitScript`, and inlined into the emitted fix script). Their
-bodies must close over **nothing** — every helper has to be defined inside.
-Hoisting a helper to module scope drops it from the serialized string, and the
-fix script throws `ReferenceError` in the browser. `packages/a11y-runtime/src/locatorRuntime.ts`
-documents this in its header comment.
+```markdown
+### `<rule-key>` "<rule name>" in `<path-glob>`
 
-Unit tests will not catch a regression here: `sonar-project.properties` excludes
-`packages/a11y-runtime/**` from coverage precisely because vitest cannot execute
-this code. Only `pnpm test:a11y` (Playwright, not in CI) exercises it.
+**Do not fix. <one-line reason>**
 
-The correct resolution is to mark them **Won't fix / false positive** in Sonar,
-or to disable `typescript:S7721` for `packages/a11y-runtime/**` in the quality
-profile. Recommend that — do not edit the runtime files.
+<Why the rule doesn't apply here — the structural constraint, with a pointer
+to the file/comment that documents it, and what breaks if "fixed".>
+```
 
-Same reasoning applies to any rule that wants to hoist, extract, or dedupe across
-the boundary of an `install*` function in that package.
-
-### `typescript:S7721` in `packages/engine/src/library.ts`
-
-**Same false-positive class as above — do not fix.**
-
-`installFindFixLibrary` is a self-contained function serialized with
-`Function.prototype.toString()` (see `serializeFindFixLibrary`) and injected
-into a live page — as `output-lib.js`, or into a Playwright context by
-`verifier.ts`. `setAttr`/`removeAttr`/`mintId` capture nothing from the
-enclosing scope, so Sonar suggests hoisting them to module scope; doing that
-drops them from the serialized string and the browser throws `ReferenceError`
-the moment a remediation script calls them — the exact failure mode a leaked
-`__name(...)` helper call caused here once already (fixed in
-`serializeFindFixLibrary`'s `__name` shim). Mark as **false positive** in
-Sonar — this is a structural must-stay-nested constraint, not a coverage gap:
-`library.test.ts` runs `installFindFixLibrary` for real under a
-`// @vitest-environment jsdom` override, so unlike `a11y-runtime`, this file
-is NOT in `sonar.coverage.exclusions`.
+`$PROJECT_ROOT/.claude/sonar-known-issues.md` is project-local (like
+`.claude/.env`) — it lives in the project's own `.claude/` directory, not in
+this shared config repo, so one project's rule exceptions never leak into
+another project's triage.
 
 ### A stale `new_coverage` gate failure
 
@@ -146,10 +132,11 @@ newer, the fix is **re-run the analysis** — not new tests. Say so plainly, and
 give the projected coverage with the excluded files removed so the claim is
 checkable.
 
-Cross-check against the local `coverage/coverage-summary.json` (vitest). A large
-gap between vitest's number and Sonar's `new_coverage` is the signature of this
-drift; `sonar-project.properties` records a prior incident of exactly this
-(Sonar 35% vs vitest 94%).
+Cross-check against the local coverage report (e.g. `coverage/coverage-summary.json`
+for vitest/Jest). A large gap between the local runner's number and Sonar's
+`new_coverage` is the signature of this drift — check whether `sonar-project.properties`
+or a nearby comment already records a prior incident of exactly this pattern
+before assuming it's new.
 
 ## Output format
 
