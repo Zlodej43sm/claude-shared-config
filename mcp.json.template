@@ -30,7 +30,7 @@
       ],
       "env": {
         "SONARQUBE_TOKEN": "${SONAR_API_TOKEN}",
-        "SONARQUBE_ORG": "${SONAR_ORG:-default-org-ns}",
+        "SONARQUBE_ORG": "${SONAR_ORG}",
         "SONARQUBE_URL": "${SONAR_URL:-https://sonarcloud.io}"
       }
     }

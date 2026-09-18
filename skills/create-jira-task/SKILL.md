@@ -22,7 +22,7 @@ Create one or more Jira issues directly via the Jira Cloud REST API (v3), using 
 [--parent=KEY] [--project=KEY] [--issuetype=NAME] [--dry-run]
 ```
 
-- `--parent=KEY` — optional. Issue key to set as `parent` on every created item (e.g. `MA-29`). Omit for top-level issues.
+- `--parent=KEY` — optional. Issue key to set as `parent` on every created item (e.g. `TASK-123`). Omit for top-level issues.
 - `--project=KEY` — optional. Defaults to `$JIRA_WORKSPACE`.
 - `--issuetype=NAME` — optional. Defaults to `Task`. Must be a valid issue type name for the target project (if unsure, cross-check an existing sibling issue's `issuetype.name` via `mcp__atlassian__jira_get_issue` first).
 - `--dry-run` — print the built payload for every item without creating anything.
@@ -68,7 +68,7 @@ Run items **sequentially, not in parallel** (avoid bursting the Jira API), with 
 
 ## Step 3 — Report
 
-Print one line per item (`OK <key> <summary>` / `FAIL <summary>: <reason>`) plus a final count, e.g. `Created 9/9 issues under MA-29.` Surface every failure with its reason so the user can retry just those.
+Print one line per item (`OK <key> <summary>` / `FAIL <summary>: <reason>`) plus a final count, e.g. `Created 9/9 issues under TASK-123.` Surface every failure with its reason so the user can retry just those.
 
 ## Constraints
 

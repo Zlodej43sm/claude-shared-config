@@ -20,7 +20,11 @@ mkdir -p "$CLAUDE_DIR"
 for name in skills agents tools hooks workflows; do
   target="$CLAUDE_DIR/$name"
   if [ -L "$target" ]; then
-    rm "$target"
+    link_dest="$(readlink "$target")"
+    if [ "$link_dest" != "$SHARED_DIR/$name" ]; then
+      echo "refusing to replace symlink with a different destination: $target -> $link_dest" >&2
+      exit 1
+    fi
   elif [ -e "$target" ]; then
     echo "refusing to overwrite existing non-symlink: $target (remove/merge it manually first)" >&2
     exit 1
@@ -29,8 +33,17 @@ for name in skills agents tools hooks workflows; do
   echo "linked $target -> $SHARED_DIR/$name"
 done
 
-cp "$SHARED_DIR/mcp.json.template" "$PROJECT_DIR/.mcp.json"
-echo "generated $PROJECT_DIR/.mcp.json from mcp.json.template"
+if [ -e "$PROJECT_DIR/.mcp.json" ]; then
+  if cmp -s "$SHARED_DIR/mcp.json.template" "$PROJECT_DIR/.mcp.json"; then
+    echo "existing .mcp.json matches template; left unchanged"
+  else
+    echo "refusing to overwrite existing .mcp.json: $PROJECT_DIR/.mcp.json" >&2
+    exit 1
+  fi
+else
+  cp "$SHARED_DIR/mcp.json.template" "$PROJECT_DIR/.mcp.json"
+  echo "generated $PROJECT_DIR/.mcp.json from mcp.json.template"
+fi
 
 if [ ! -f "$CLAUDE_DIR/.env" ]; then
   cp "$SHARED_DIR/env.example" "$CLAUDE_DIR/.env.example"

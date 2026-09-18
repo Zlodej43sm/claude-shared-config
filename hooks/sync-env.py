@@ -23,11 +23,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-REQUIRED_KEYS = (
+BITBUCKET_KEYS = (
     "BITBUCKET_WORKSPACE",
     "BITBUCKET_REPO_SLUG",
     "BITBUCKET_EMAIL",
     "BITBUCKET_API_TOKEN",
+)
+GITHUB_KEYS = (
+    "GITHUB_OWNER",
+    "GITHUB_REPO",
+    "GITHUB_TOKEN",
+)
+JIRA_KEYS = (
     "JIRA_WORKSPACE",
     "JIRA_BASE_URL",
     "JIRA_EMAIL",
@@ -48,6 +55,37 @@ def warn(msg: str) -> None:
 def looks_like_placeholder(value: str) -> bool:
     lowered = value.lower()
     return any(p in lowered for p in PLACEHOLDER_PATTERNS)
+
+
+def detect_git_host(env: dict[str, str]) -> str | None:
+    """Mirrors tools/detect_git_host.sh: explicit GIT_HOST override, then the
+    origin remote URL, then whichever of BITBUCKET_WORKSPACE/GITHUB_OWNER is
+    the only one populated. Returns None if undeterminable (caller warns)."""
+    override = env.get("GIT_HOST", "").strip().lower()
+    if override in ("bitbucket", "github"):
+        return override
+
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        remote_url = result.stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        remote_url = ""
+
+    if "bitbucket.org" in remote_url:
+        return "bitbucket"
+    if "github.com" in remote_url:
+        return "github"
+
+    if env.get("BITBUCKET_WORKSPACE") and not env.get("GITHUB_OWNER"):
+        return "bitbucket"
+    if env.get("GITHUB_OWNER") and not env.get("BITBUCKET_WORKSPACE"):
+        return "github"
+    return None
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -117,7 +155,20 @@ def main() -> int:
 
     env = resolve_op_refs(env)
 
-    for key in REQUIRED_KEYS:
+    host = detect_git_host(env)
+    if host == "bitbucket":
+        required_keys = BITBUCKET_KEYS + JIRA_KEYS
+    elif host == "github":
+        required_keys = GITHUB_KEYS + JIRA_KEYS
+    else:
+        warn(
+            "could not determine git host (set GIT_HOST=bitbucket|github, or "
+            "populate BITBUCKET_WORKSPACE/GITHUB_OWNER); skipping host-specific "
+            "required-key checks"
+        )
+        required_keys = JIRA_KEYS
+
+    for key in required_keys:
         value = env.get(key, "")
         if not value:
             warn(f"required key {key} missing from .claude/.env")

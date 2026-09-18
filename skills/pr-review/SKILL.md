@@ -1,9 +1,9 @@
 ---
 name: pr-review
-description: Review a Bitbucket PR (by number, URL, or branch) — parses the PR title and description for every Jira ticket and Confluence link, batch-fetches them all in one structured preflight pass to build a base logic understanding, asks targeted clarifying questions about cross-service dependencies before the review starts, then delegates to the pr-reviewer subagent for a thorough structured review.
+description: Review a Bitbucket or GitHub PR (by number, URL, or branch) — parses the PR title and description for every Jira ticket and Confluence link, batch-fetches them all in one structured preflight pass to build a base logic understanding, asks targeted clarifying questions about cross-service dependencies before the review starts, then delegates to the pr-reviewer subagent for a thorough structured review.
 ---
 
-# pr-review — entry point for Bitbucket PR review
+# pr-review — entry point for Bitbucket/GitHub PR review
 
 You are the entry point. Your job, in order:
 
@@ -22,13 +22,16 @@ Do **not** fetch the PR diff, classify files, or write the review yourself. The 
 
 All executable logic lives in `.claude/tools/`. Never inline bash or python — call the tools.
 
+This skill supports two git-hosting backends, **Bitbucket** and **GitHub**. `detect_git_host.sh` resolves which one applies to this project (see Step 0); every later step picks the matching `bb_*.sh` or `gh_*.sh` tool. Each pair returns the **same JSON shape**, so nothing downstream — the preflight in Step 1.5, the `pr-reviewer` subagent, Step 3's publishing — needs host-specific parsing. The one real behavioral difference: GitHub has no true "file-level, no line" comment anchor, so `gh_post_comment.sh`'s path-only mode falls back to a general comment prefixed with the file path (see that tool's header for detail).
+
 | Tool                                                                                                           | Purpose                                                                                                                                                                                               |
 | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bb_pr_fetch.sh <PR_ID>`                                                                                       | Fetch PR metadata + commits → stdout JSON + `/tmp/pr_meta.json` `/tmp/pr_commits.json`                                                                                                                |
-| `bb_pr_lookup.sh <BRANCH>`                                                                                     | Find open PR by branch → stdout JSON `{mode, pr_id?, title?, choices?}`                                                                                                                               |
-| `bb_pr_diffstat.sh <PR_ID>`                                                                                    | List all files changed in a PR → stdout JSON `{changed_files: ["path/to/file.ts", ...]}`                                                                                                              |
-| `bb_post_comment.sh --pr-id=N --body=TEXT [--path=P [--line=L]]`                                               | Post PR comment → stdout JSON `{id, anchor}`. Three modes: path+line=line-level inline; path only=file-level anchor (works even when file not in diff, appears in Files tab); neither=general thread. |
-| `bb_fetch_file.sh <COMMIT> <PATH>`                                                                             | Fetch file at commit → stdout raw content                                                                                                                                                             |
+| `detect_git_host.sh`                                                                                           | Resolve `bitbucket` or `github` for this project → stdout bare word                                                                                                                                   |
+| `bb_pr_fetch.sh <PR_ID>` / `gh_pr_fetch.sh <PR_NUMBER>`                                                        | Fetch PR metadata + commits → stdout JSON + `/tmp/{pr,gh_pr}_meta.json` `/tmp/{pr,gh_pr}_commits.json`                                                                                                |
+| `bb_pr_lookup.sh <BRANCH>` / `gh_pr_lookup.sh <BRANCH>`                                                        | Find open PR by branch → stdout JSON `{mode, pr_id?, title?, choices?}`                                                                                                                               |
+| `bb_pr_diffstat.sh <PR_ID>` / `gh_pr_diffstat.sh <PR_NUMBER>`                                                  | List all files changed in a PR → stdout JSON `{changed_files: ["path/to/file.ts", ...]}`                                                                                                              |
+| `bb_post_comment.sh` / `gh_post_comment.sh` `--pr-id=N --body=TEXT [--path=P [--line=L]]`                     | Post PR comment → stdout JSON `{id, anchor}`. Three modes: path+line=line-level inline; path only=file-level anchor on Bitbucket (works even when file not in diff, appears in Files tab), falls back to a general comment on GitHub; neither=general thread. |
+| `bb_fetch_file.sh <COMMIT> <PATH>` / `gh_fetch_file.sh <COMMIT> <PATH>`                                       | Fetch file at commit → stdout raw content                                                                                                                                                             |
 | `jira_fetch_batch.sh KEY1 KEY2 …`                                                                              | Fetch Jira tickets + remote links → stdout JSON + `/tmp/jira_*.json`                                                                                                                                  |
 | `conf_fetch_batch.sh ID1 ID2 …`                                                                                | Fetch Confluence pages → stdout JSON + `/tmp/conf_*.json`                                                                                                                                             |
 | `extract_pr_links.py`                                                                                          | stdin: PR text → stdout JSON `{jira_keys, conf_page_ids, external_repos}` + writes `/tmp/link_registry.json`                                                                                          |
@@ -43,8 +46,8 @@ All executable logic lives in `.claude/tools/`. Never inline bash or python — 
 
 - `<pr-identifier> [-- <repo1> [<repo2> ...]]`
     - `<pr-identifier>` — one of:
-        - A bare PR number: `2`, optionally `#2`. Resolved against `$BITBUCKET_WORKSPACE/$BITBUCKET_REPO_SLUG` from `.env`.
-        - A full Bitbucket PR URL: `https://bitbucket.org/<workspace>/<repo>/pull-requests/<id>`. Trailing path/query is fine. When the URL names a workspace/repo different from `.env`, the URL wins.
+        - A bare PR number: `2`, optionally `#2`. Resolved against `$BITBUCKET_WORKSPACE/$BITBUCKET_REPO_SLUG` or `$GITHUB_OWNER/$GITHUB_REPO` from `.env`, whichever the detected git host uses (see Step 0).
+        - A full Bitbucket PR URL: `https://bitbucket.org/<workspace>/<repo>/pull-requests/<id>`, or a full GitHub PR URL: `https://github.com/<owner>/<repo>/pull/<id>`. Trailing path/query is fine either way. When the URL names a workspace/repo (or owner/repo) different from `.env`, the URL wins — and its host overrides Step 0's detected host too.
         - A source branch name: anything that isn't all digits and doesn't look like a URL, e.g. `feat/$JIRA_WORKSPACE-2-description`.
         - Empty: use the current branch (`git branch --show-current`).
     - `--` followed by one or more **related repo paths or slugs** (e.g. `../sibling-service`, `../shared-lib`) — microservices / sibling packages the reviewer should consider when assessing cross-service contract changes. Optional; omit if not relevant.
@@ -53,13 +56,19 @@ Parse the `--` separator greedily: everything before `--` is the pr-identifier; 
 
 ---
 
-## Step 0 — Load env and validate credentials
+## Step 0 — Load env, resolve the git host, and validate credentials
 
 ```bash
 set -a; . .claude/.env; set +a
+HOST=$(.claude/tools/detect_git_host.sh) || HOST=""
 ```
 
-Required keys: `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`, `JIRA_WORKSPACE`, `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`.
+`$HOST` is `bitbucket` or `github` — carry it through every later step; it decides which tool script and which credential set applies. If `detect_git_host.sh` exited non-zero (empty `$HOST`), tell the user to set `GIT_HOST=bitbucket` or `GIT_HOST=github` in `.claude/.env` and stop.
+
+Required keys:
+- **Always**: `JIRA_WORKSPACE`, `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`.
+- **When `$HOST=bitbucket`**: `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`.
+- **When `$HOST=github`**: `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`GITHUB_API_URL` is optional — only needed for GitHub Enterprise Server).
 
 Optional keys: `CONFLUENCE_BASE_URL`. If absent, falls back to the host of `$JIRA_BASE_URL` for Confluence URL matching.
 
@@ -71,8 +80,9 @@ If any **required** key is missing or has a placeholder value (`replace-with-...
 
 Parse the pr-identifier portion of `args`:
 
-- `^#?[0-9]+$` → `PR_ID = digits only`. Skip to Step 1.5.
-- `bitbucket.org/<ws>/<repo>/pull-requests/<id>(/.*)?` → extract workspace, repo, id; override `.env` values. Skip to Step 1.5.
+- `^#?[0-9]+$` → `PR_ID = digits only`. Skip to Step 1.5, using `$HOST` from Step 0.
+- `bitbucket.org/<ws>/<repo>/pull-requests/<id>(/.*)?` → extract workspace, repo, id; override `.env` values and set `HOST=bitbucket` (an explicit URL always wins over Step 0's detected host). Skip to Step 1.5.
+- `github.com/<owner>/<repo>/pull/<id>(/.*)?` → extract owner, repo, id; override `.env` values and set `HOST=github`. Skip to Step 1.5.
 - Empty → `BRANCH = $(git branch --show-current)`. Do branch lookup (below).
 - Anything else → treat as source branch name. Do branch lookup (below).
 
@@ -80,7 +90,11 @@ Parse the pr-identifier portion of `args`:
 
 ```bash
 set -a; . .claude/.env; set +a
-.claude/tools/bb_pr_lookup.sh "$BRANCH"
+if [ "$HOST" = "github" ]; then
+  .claude/tools/gh_pr_lookup.sh "$BRANCH"
+else
+  .claude/tools/bb_pr_lookup.sh "$BRANCH"
+fi
 ```
 
 Parse the JSON output:
@@ -89,7 +103,7 @@ Parse the JSON output:
 - `mode=local` → **local mode**: skip Steps 1.5–1.6, delegate with `mode=local, branch=$BRANCH, destination=origin/develop`. Tell the user no open PR was found.
 - `mode=ambiguous` → list `choices` and ask the user to pick. Stop and wait.
 
-On 401/403: tell the user to check `BITBUCKET_EMAIL` / `BITBUCKET_API_TOKEN` and stop. On 404: tell them the workspace/repo slug in `.env` is likely wrong.
+On 401/403: tell the user to check `BITBUCKET_EMAIL`/`BITBUCKET_API_TOKEN` (Bitbucket) or `GITHUB_TOKEN` (GitHub) and stop. On 404: tell them the workspace/repo slug (Bitbucket) or owner/repo (GitHub) in `.env` is likely wrong.
 
 ---
 
@@ -101,7 +115,11 @@ On 401/403: tell the user to check `BITBUCKET_EMAIL` / `BITBUCKET_API_TOKEN` and
 
 ```bash
 set -a; . .claude/.env; set +a
-.claude/tools/bb_pr_fetch.sh "$PR_ID"
+if [ "$HOST" = "github" ]; then
+  .claude/tools/gh_pr_fetch.sh "$PR_ID"
+else
+  .claude/tools/bb_pr_fetch.sh "$PR_ID"
+fi
 ```
 
 Capture the JSON output as `PR_SUMMARY`. Extract: `title`, `description`, `source_branch`, `dest_branch`, `source_commit`, `author`, `commit_messages`.
@@ -190,7 +208,7 @@ Present the full `PREFETCHED_CONTEXT` block to the user as a code block, then as
 >
 > - **Related repo paths** — local paths like `../consumer-service`
 > - **Additional Confluence docs** — paste any contract or schema-registry page URL
-> - **Bitbucket slugs** — a sibling repo name if the full path isn't available locally
+> - **Bitbucket/GitHub slugs** — a sibling repo name if the full path isn't available locally
 >
 > Reply with any of the above, or **"proceed"** to continue without them.
 
@@ -208,12 +226,14 @@ Use the Agent tool with `subagent_type: "pr-reviewer"`. Do **not** pass credenti
 **PR-mode prompt template:**
 
 ```
-Review this Bitbucket PR. Resolved values from the entry-point skill:
+Review this <Bitbucket|GitHub> PR. Resolved values from the entry-point skill:
 
-  workspace:     <BITBUCKET_WORKSPACE>
-  repo:          <BITBUCKET_REPO_SLUG>
+  host:          <bitbucket|github — from $HOST>
+  workspace:     <BITBUCKET_WORKSPACE, or GITHUB_OWNER when host=github>
+  repo:          <BITBUCKET_REPO_SLUG, or GITHUB_REPO when host=github>
   pr_id:         <PR_ID>
-  base_url:      https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>/pullrequests/<pr_id>
+  base_url:      host=bitbucket -> https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>/pullrequests/<pr_id>
+                 host=github    -> <GITHUB_API_URL, default https://api.github.com>/repos/<workspace>/<repo>/pulls/<pr_id>
   mode:          pr
   related_repos: <comma-separated list, or "none">
   extra_docs:    <comma-separated Confluence URLs from Step 1.6, or "none">
@@ -258,7 +278,7 @@ Skip entirely in local mode.
 
 ### 3a — Resolve source commit
 
-Source commit is already in `$source_commit` from Step 1.5. If the session is fresh and that value is gone, re-run `bb_pr_fetch.sh $PR_ID` and read `.source_commit` from the JSON output.
+Source commit is already in `$source_commit` from Step 1.5. If the session is fresh and that value is gone, re-run `bb_pr_fetch.sh $PR_ID` (or `gh_pr_fetch.sh $PR_ID` when `$HOST=github`) and read `.source_commit` from the JSON output.
 
 ### 3b — Parse findings from the saved review
 
@@ -276,37 +296,51 @@ Before resolving any line anchor, fetch the set of files actually changed in thi
 
 ```bash
 set -a; . .claude/.env; set +a
-.claude/tools/bb_pr_diffstat.sh "$PR_ID"
+if [ "$HOST" = "github" ]; then
+  .claude/tools/gh_pr_diffstat.sh "$PR_ID"
+else
+  .claude/tools/bb_pr_diffstat.sh "$PR_ID"
+fi
 ```
 
-Capture the `changed_files` array as `DIFF_FILES`. This is the **authoritative gate** for all anchor decisions below: a file not in `DIFF_FILES` cannot receive an inline comment — Bitbucket will silently create a misanchored comment that appears detached from the diff view.
+Capture the `changed_files` array as `DIFF_FILES`. This is the **authoritative gate** for all anchor decisions below: a file not in `DIFF_FILES` cannot receive an inline comment — Bitbucket will silently create a misanchored comment that appears detached from the diff view; GitHub instead rejects the post outright (422) if the line isn't part of a diff hunk.
 
 ### 3c — Resolve and verify all line anchors
 
-**Mandatory before posting any inline comment.** Bitbucket silently accepts out-of-range line numbers and produces unanchored (invisible) comments.
+**Mandatory before posting any inline comment.** Bitbucket silently accepts out-of-range line numbers and produces unanchored (invisible) comments; GitHub is stricter and returns a hard error, but only for lines outside the diff — a line that's in the file but in the wrong hunk position can still land on the wrong code, so the same verification applies to both hosts.
 
 **Diffstat gate (apply first to every finding with a file path):**
 
-- If the finding's file is **not** in `DIFF_FILES` → post a **file-level comment**: pass `--path` but **omit** `--line`. The comment will be anchored to the file in the Files tab rather than floating as a general thread. Do not attempt to resolve a line number for these.
+- If the finding's file is **not** in `DIFF_FILES` → post a **file-level comment**: pass `--path` but **omit** `--line`. On Bitbucket the comment is anchored to the file in the Files tab; on GitHub, `gh_post_comment.sh` falls back to a general comment prefixed with the file path, since GitHub has no true file-only anchor. Either way, do not attempt to resolve a line number for these.
 - If the finding's file **is** in `DIFF_FILES` → proceed to the line-range checks below.
+
+Fetch the file at `$source_commit` via `bb_fetch_file.sh` or `gh_fetch_file.sh` depending on `$HOST` (same raw-content output either way):
+
+```bash
+set -a; . .claude/.env; set +a
+if [ "$HOST" = "github" ]; then
+  FETCH_FILE=".claude/tools/gh_fetch_file.sh"
+else
+  FETCH_FILE=".claude/tools/bb_fetch_file.sh"
+fi
+```
 
 **For inline candidates (explicit `file:LINE`, file is in diff):**
 
 ```bash
-set -a; . .claude/.env; set +a
-.claude/tools/bb_fetch_file.sh "$source_commit" "$PATH" | wc -l
+"$FETCH_FILE" "$source_commit" "$PATH" | wc -l
 ```
 
 - `line > total_lines` → keyword-search the file for a distinctive term from the finding body:
     ```bash
-    .claude/tools/bb_fetch_file.sh "$source_commit" "$PATH" | grep -n "KEYWORD"
+    "$FETCH_FILE" "$source_commit" "$PATH" | grep -n "KEYWORD"
     ```
-    Use the matched line. If no match, anchor to line 1.
+    Use the matched line. If no match, anchor to line 1. On GitHub, a review comment must land on a line that is actually part of the PR's diff hunks — if the matched line falls outside any hunk, the post in 3d will be rejected (422); fall back to a general comment noting the file and intended line in that case.
 - `line <= total_lines` → spot-check: fetch the file, confirm expected code appears near that line. If not, run keyword search.
 
 **For file-only candidates (no line number, file is in diff):**
 
-1. Fetch the file via `bb_fetch_file.sh`.
+1. Fetch the file via `$FETCH_FILE`.
 2. Search for 2–3 distinctive keywords from the finding body.
 3. Use the first match line, or line 1 if no match.
 
@@ -324,16 +358,21 @@ set -a; . .claude/.env; set +a
 
 ```bash
 set -a; . .claude/.env; set +a
+if [ "$HOST" = "github" ]; then
+  POST_COMMENT=".claude/tools/gh_post_comment.sh"
+else
+  POST_COMMENT=".claude/tools/bb_post_comment.sh"
+fi
 
 # Inline comment
-.claude/tools/bb_post_comment.sh \
+"$POST_COMMENT" \
   --pr-id="$PR_ID" \
   --body="BODY" \
   --path="PATH" \
   --line="LINE"
 
 # General comment (no file reference)
-.claude/tools/bb_post_comment.sh \
+"$POST_COMMENT" \
   --pr-id="$PR_ID" \
   --body="BODY"
 ```
@@ -361,6 +400,6 @@ Do this **after** writing the review file. If `related_repos` was already provid
 - **No double-fetching.** Pass `PREFETCHED_CONTEXT` to the subagent verbatim; never re-fetch.
 - **No git mutations.** Only `git branch --show-current` (read-only).
 - **No token leaks.** Never put credentials in the subagent prompt; the subagent re-reads `.env`.
-- **No posting without line verification.** Never call `bb_post_comment.sh` with `--line` before running Step 3c.
+- **No posting without line verification.** Never call `bb_post_comment.sh`/`gh_post_comment.sh` with `--line` before running Step 3c.
 - **No re-reviewing.** If the subagent returned a review, your job is done.
 - **No blocking on cross-service questions.** Step 1.6 is one round of clarification. If the user says "proceed", proceed.
