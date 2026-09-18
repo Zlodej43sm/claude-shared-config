@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Wire a project's .claude/ to this shared skills/agents/tools/hooks source of truth.
+# Wire a project's .claude/ to this shared skills/agents/tools/hooks/workflows source of truth.
 #
 # Usage: bin/link-project.sh <path-to-project-repo>
 #
-# - Symlinks .claude/{skills,agents,tools,hooks} to this repo's copies.
+# - Symlinks .claude/{skills,agents,tools,hooks,workflows} to this repo's copies.
 # - Generates <project>/.mcp.json from mcp.json.template (a real file, not a
 #   symlink, in case an MCP client requires that).
 # - Never touches .claude/.env, .claude/settings.json, .claude/settings.local.json,
@@ -17,7 +17,7 @@ CLAUDE_DIR="$PROJECT_DIR/.claude"
 
 mkdir -p "$CLAUDE_DIR"
 
-for name in skills agents tools hooks; do
+for name in skills agents tools hooks workflows; do
   target="$CLAUDE_DIR/$name"
   if [ -L "$target" ]; then
     rm "$target"

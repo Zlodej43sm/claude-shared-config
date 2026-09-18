@@ -1,13 +1,17 @@
 # claude-shared-config
 
-Single source of truth for Claude Code `skills/`, `agents/`, `tools/`, and `hooks/`,
-shared across all local levelAccess projects instead of hand-copying them per repo.
+Single source of truth for Claude Code `skills/`, `agents/`, `tools/`, `hooks/`, and
+`workflows/`, shared across all local levelAccess projects instead of hand-copying
+them per repo.
 
 ## What's here
 
-- `skills/`, `agents/`, `tools/`, `hooks/` — the actual shared content. None of it
-  hardcodes a repo path; everything resolves the working project via
+- `skills/`, `agents/`, `tools/`, `hooks/`, `workflows/` — the actual shared content.
+  None of it hardcodes a repo path; everything resolves the working project via
   `$CLAUDE_PROJECT_DIR` (set by Claude Code) or `git rev-parse --show-toplevel`.
+  `workflows/` holds saved Workflow-tool scripts (e.g. `split-pr-analyze.js`, a hard
+  dependency of the `split-pr` skill) — check any skill for `.claude/<dir>`
+  references before assuming a new top-level `.claude/` folder is project-specific.
 - `mcp.json.template` — generated (copied, not symlinked) into each project's root
   `.mcp.json`. All values are `${VAR}` references resolved from that project's own
   `.claude/.env` — the template itself never changes per project.
@@ -26,7 +30,7 @@ session/runtime state. Project `.gitignore` must exclude `.claude/.env`,
 ## Adding a project
 
 ```bash
-~/dev/levelAccess/claude-shared-config/bin/link-project.sh ~/dev/levelAccess/<project>
+~/dev/claude-shared-config/bin/link-project.sh ~/dev/levelAccess/<project>
 ```
 
 Then fill in `.claude/.env` from the generated `.claude/.env.example`.
