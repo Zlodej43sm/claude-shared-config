@@ -134,7 +134,7 @@ Write a markdown plan to `.claude/reviews/pr-split/<branch-with-slashes-as-dashe
 <list, each with which concerns are mixed in and how to tell them apart>
 
 ## Risks / dependencies
-<bulleted, most important first — ordering violations, shared-file hunk hazards, reference_mismatches, uncommitted-diff items, anything from LESSONS.md that applied here>
+<bulleted, most important first — ordering violations, shared-file hunk hazards, reference_mismatches, uncommitted-diff items, anything from the Step 0 lessons text that applied here>
 
 ## Standalone findings (not about the split)
 <e.g. reference_mismatches that are real bugs regardless of how the PR gets split>

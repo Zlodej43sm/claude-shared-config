@@ -9,7 +9,8 @@ export const meta = {
 //   baseRef: string,
 //   headRef: string,
 //   groups: [{ key: string, paths: string[], hint?: string }],
-//   lessons: string,         // full text of .claude/skills/split-pr/LESSONS.md
+//   lessons: string,         // combined text: shared .claude/skills/split-pr/LESSONS.md
+//                            // + project-local .claude/reviews/split-pr-lessons.local.md
 //   importGraphSummary: string, // compact text summary of import_graph.sh's output relevant to this group set
 // }
 
