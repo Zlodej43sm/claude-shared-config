@@ -10,15 +10,18 @@ feature implementation.
 
 Link this repo into a project — symlinks `skills/`, `agents/`, `tools/`,
 `hooks/`, and `workflows/` into the project's `.claude/`, and generates its
-`.mcp.json`:
+`.mcp.json` and `.claude/settings.json`:
 
 ```bash
 bin/link-project.sh <project_path>
 ```
 
 Then copy the generated `.claude/.env.example` to `.claude/.env` and fill in
-the per-project values. It safely reuses only its own symlinks and refuses to
-overwrite an existing `.mcp.json`.
+the per-project values. The script is idempotent and non-destructive: it
+safely reuses its own existing symlinks, refuses to overwrite an existing
+`.mcp.json` that diverges from the template, and leaves an existing, diverged
+`.claude/settings.json` alone (a project is expected to customize its
+permissions/hooks over time — that's not an error).
 
 ## What's here
 
@@ -31,6 +34,13 @@ overwrite an existing `.mcp.json`.
 - `mcp.json.template` — generated (copied, not symlinked) into each project's root
   `.mcp.json`. All values are `${VAR}` references resolved from that project's own
   `.claude/.env` — the template itself never changes per project.
+- `settings.json.template` — generated (copied, not symlinked) into a project's
+  `.claude/settings.json` the first time it's linked, the same way as `.mcp.json`
+  above. Only generated when no `settings.json` exists yet; once a project has one,
+  it's free to diverge (different permissions, extra hooks) and `link-project.sh`
+  will never touch it again. Currently wires up `sync-env.py` (SessionStart) and
+  `biome-pretooluse.py` (PreToolUse on Write/Edit) — the latter no-ops silently on
+  projects without a `node_modules/.bin/biome`, so it's safe as a shared default.
 - `env.example` — template for a project's `.claude/.env`. Secret fields use
   `op://` (1Password) references; see the file header for setup. Includes both
   Bitbucket and GitHub credential blocks — `GIT_HOST` (or `tools/detect_git_host.sh`'s
@@ -71,7 +81,12 @@ Subagents invoked by the skills above — not called directly by name.
 
 ## What's NOT here (stays per-project, never write project values back into this repo)
 
-`.claude/.env`, `.claude/settings.json`, `.claude/settings.local.json`,
-`.claude/plans/`, `.claude/reviews/`, `.claude/worktrees/`, and any other
-session/runtime state. Project `.gitignore` must exclude `.claude/.env`,
+`.claude/.env`, `.claude/settings.local.json`, `.claude/plans/`,
+`.claude/reviews/`, `.claude/worktrees/`, and any other session/runtime state
+are never templated here at all. `.claude/settings.json` and `.mcp.json` are
+generated *from* this repo once (see `settings.json.template` /
+`mcp.json.template` above), but the generated file then belongs entirely to
+the project — `link-project.sh` never overwrites either one afterward, so a
+project's customizations never need to (and never should) get written back
+here. Project `.gitignore` must exclude `.claude/.env`,
 `.claude/settings.local.json`, and `.mcp.json`.

@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": ["Bash", "Read", "WebFetch", "WebSearch"]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/sync-env.py\"",
+            "statusMessage": "Syncing .claude/.env into session env..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/biome-pretooluse.py\"",
+            "statusMessage": "Running Biome check on prospective save..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": []
+  }
+}
