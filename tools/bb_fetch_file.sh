@@ -17,13 +17,16 @@ FILE="${2:?ERROR:   bb_fetch_file.sh requires FILE_PATH as \$2}"
 
 BASE="https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/src"
 
+TMP_FILE=$(mktemp)
+trap 'rm -f "$TMP_FILE"' EXIT
+
 HTTP_STATUS=$(curl -sSL -w "%{http_code}" \
   -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}" \
   "${BASE}/${COMMIT}/${FILE}" \
-  -o /tmp/bb_file_fetch.tmp)
+  -o "$TMP_FILE")
 
 case "$HTTP_STATUS" in
-  200) cat /tmp/bb_file_fetch.tmp ;;
+  200) cat "$TMP_FILE" ;;
   404) echo "ERROR: ${FILE} not found at ${COMMIT}" >&2; exit 2 ;;
   *)   echo "ERROR: HTTP ${HTTP_STATUS} for ${FILE}" >&2; exit 3 ;;
 esac

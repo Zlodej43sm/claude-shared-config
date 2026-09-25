@@ -4,17 +4,21 @@
 # SCHEMA_IN
 #   $@  Jira ticket keys (e.g. MA-22 MA-21)
 #   env JIRA_BASE_URL  JIRA_EMAIL  JIRA_API_TOKEN
+#   env PR_REVIEW_CACHE_DIR  — per-invocation cache dir (see pr-review SKILL.md Step 0)
 #
 # SCHEMA_OUT  stdout JSON
 #   { "fetched": ["MA-22", ...], "not_found": ["MA-99", ...] }
 #   Side-effects:
-#     /tmp/jira_{KEY}.json               — ticket data (expand=renderedFields)
-#     /tmp/jira_remotelinks_{KEY}.json   — formally attached web links
+#     $PR_REVIEW_CACHE_DIR/jira_{KEY}.json               — ticket data (expand=renderedFields)
+#     $PR_REVIEW_CACHE_DIR/jira_remotelinks_{KEY}.json   — formally attached web links
 #
-# EXIT  0=ok (partial not_found in JSON)  1=credential-error (401/403)
+# EXIT  0=ok (partial not_found in JSON)  1=credential-error (401/403)  2=missing-cache-dir
 
 set -uo pipefail
 [[ $# -eq 0 ]] && { echo '{"fetched":[],"not_found":[]}'; exit 0; }
+
+: "${PR_REVIEW_CACHE_DIR:?ERROR: PR_REVIEW_CACHE_DIR must be set (see pr-review SKILL.md Step 0)}"
+mkdir -p "$PR_REVIEW_CACHE_DIR"
 
 B64=$(printf '%s:%s' "${JIRA_EMAIL}" "${JIRA_API_TOKEN}" | base64)
 STATUS_DIR=$(mktemp -d)
@@ -25,7 +29,7 @@ fetch_one() {
   sc=$(curl -sS -L -w "%{http_code}" \
     -H "Authorization: Basic ${B64}" -H "Accept: application/json" \
     "${JIRA_BASE_URL}/rest/api/3/issue/${KEY}?expand=renderedFields" \
-    -o "/tmp/jira_${KEY}.json")
+    -o "${PR_REVIEW_CACHE_DIR}/jira_${KEY}.json")
   echo "$sc" > "${STATUS_DIR}/${KEY}"
 
   if [[ "$sc" == "401" || "$sc" == "403" ]]; then return; fi
@@ -33,7 +37,7 @@ fetch_one() {
   curl -sS -L \
     -H "Authorization: Basic ${B64}" -H "Accept: application/json" \
     "${JIRA_BASE_URL}/rest/api/3/issue/${KEY}/remotelink" \
-    -o "/tmp/jira_remotelinks_${KEY}.json" &>/dev/null || true
+    -o "${PR_REVIEW_CACHE_DIR}/jira_remotelinks_${KEY}.json" &>/dev/null || true
 }
 
 for KEY in "$@"; do fetch_one "$KEY" & done

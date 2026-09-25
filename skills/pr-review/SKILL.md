@@ -27,16 +27,16 @@ This skill supports two git-hosting backends, **Bitbucket** and **GitHub**. `det
 | Tool                                                                                                           | Purpose                                                                                                                                                                                               |
 | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `detect_git_host.sh`                                                                                           | Resolve `bitbucket` or `github` for this project → stdout bare word                                                                                                                                   |
-| `bb_pr_fetch.sh <PR_ID>` / `gh_pr_fetch.sh <PR_NUMBER>`                                                        | Fetch PR metadata + commits → stdout JSON + `/tmp/{pr,gh_pr}_meta.json` `/tmp/{pr,gh_pr}_commits.json`                                                                                                |
+| `bb_pr_fetch.sh <PR_ID>` / `gh_pr_fetch.sh <PR_NUMBER>`                                                        | Fetch PR metadata + commits → stdout JSON (no on-disk side effects — private per-invocation temp files, removed on exit)                                                                              |
 | `bb_pr_lookup.sh <BRANCH>` / `gh_pr_lookup.sh <BRANCH>`                                                        | Find open PR by branch → stdout JSON `{mode, pr_id?, title?, choices?}`                                                                                                                               |
 | `bb_pr_diffstat.sh <PR_ID>` / `gh_pr_diffstat.sh <PR_NUMBER>`                                                  | List all files changed in a PR → stdout JSON `{changed_files: ["path/to/file.ts", ...]}`                                                                                                              |
 | `bb_post_comment.sh` / `gh_post_comment.sh` `--pr-id=N --body=TEXT [--path=P [--line=L]]`                     | Post PR comment → stdout JSON `{id, anchor}`. Three modes: path+line=line-level inline; path only=file-level anchor on Bitbucket (works even when file not in diff, appears in Files tab), falls back to a general comment on GitHub; neither=general thread. |
 | `bb_fetch_file.sh <COMMIT> <PATH>` / `gh_fetch_file.sh <COMMIT> <PATH>`                                       | Fetch file at commit → stdout raw content                                                                                                                                                             |
-| `jira_fetch_batch.sh KEY1 KEY2 …`                                                                              | Fetch Jira tickets + remote links → stdout JSON + `/tmp/jira_*.json`                                                                                                                                  |
-| `conf_fetch_batch.sh ID1 ID2 …`                                                                                | Fetch Confluence pages → stdout JSON + `/tmp/conf_*.json`                                                                                                                                             |
-| `extract_pr_links.py`                                                                                          | stdin: PR text → stdout JSON `{jira_keys, conf_page_ids, external_repos}` + writes `/tmp/link_registry.json`                                                                                          |
-| `extract_secondary_links.py [--fetched-keys=…] [--fetched-pages=…]`                                            | Reads `/tmp/jira_*.json` + `/tmp/conf_*.json` → stdout JSON `{new_jira_keys, new_conf_page_ids}` + updates `/tmp/link_registry.json`                                                                  |
-| `build_prefetch_context.py --pr-id=N --title=T --source-branch=B --dest-branch=B --source-commit=H --author=A` | Reads all `/tmp/jira_*.json` + `/tmp/conf_*.json` + `/tmp/link_registry.json` → stdout PREFETCHED_CONTEXT block                                                                                       |
+| `jira_fetch_batch.sh KEY1 KEY2 …`                                                                              | Fetch Jira tickets + remote links → stdout JSON + `$PR_REVIEW_CACHE_DIR/jira_*.json` (requires `PR_REVIEW_CACHE_DIR` env)                                                                             |
+| `conf_fetch_batch.sh ID1 ID2 …`                                                                                | Fetch Confluence pages → stdout JSON + `$PR_REVIEW_CACHE_DIR/conf_*.json` (requires `PR_REVIEW_CACHE_DIR` env)                                                                                        |
+| `extract_pr_links.py`                                                                                          | stdin: PR text → stdout JSON `{jira_keys, conf_page_ids, external_repos}` + writes `$PR_REVIEW_CACHE_DIR/link_registry.json` (requires `PR_REVIEW_CACHE_DIR` env)                                     |
+| `extract_secondary_links.py [--fetched-keys=…] [--fetched-pages=…]`                                            | Reads `$PR_REVIEW_CACHE_DIR/jira_*.json` + `$PR_REVIEW_CACHE_DIR/conf_*.json` → stdout JSON `{new_jira_keys, new_conf_page_ids}` + updates `$PR_REVIEW_CACHE_DIR/link_registry.json`                  |
+| `build_prefetch_context.py --pr-id=N --title=T --source-branch=B --dest-branch=B --source-commit=H --author=A` | Reads all `$PR_REVIEW_CACHE_DIR/jira_*.json` + `$PR_REVIEW_CACHE_DIR/conf_*.json` + `$PR_REVIEW_CACHE_DIR/link_registry.json` → stdout PREFETCHED_CONTEXT block                                       |
 
 ---
 
@@ -61,9 +61,12 @@ Parse the `--` separator greedily: everything before `--` is the pr-identifier; 
 ```bash
 set -a; . .claude/.env; set +a
 HOST=$(.claude/tools/detect_git_host.sh) || HOST=""
+CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pr-review.XXXXXXXX")
 ```
 
 `$HOST` is `bitbucket` or `github` — carry it through every later step; it decides which tool script and which credential set applies. If `detect_git_host.sh` exited non-zero (empty `$HOST`), tell the user to set `GIT_HOST=bitbucket` or `GIT_HOST=github` in `.claude/.env` and stop.
+
+`$CACHE_DIR` is a fresh, unique directory for this invocation's Jira/Confluence prefetch data — carry it through every later step exactly like `$HOST`. Every command that calls `extract_pr_links.py`, `jira_fetch_batch.sh`, `conf_fetch_batch.sh`, `extract_secondary_links.py`, or `build_prefetch_context.py` must `export PR_REVIEW_CACHE_DIR="$CACHE_DIR"` first (in addition to sourcing `.claude/.env`) — these tools reject a missing `PR_REVIEW_CACHE_DIR` rather than falling back to a shared location. This keeps concurrent or sequential `/pr-review` runs — different PRs, different projects sharing this same tool set, or two sessions running at once — from reading each other's cached tickets and pages out of a shared temp directory.
 
 Required keys:
 - **Always**: `JIRA_WORKSPACE`, `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`.
@@ -128,6 +131,7 @@ Capture the JSON output as `PR_SUMMARY`. Extract: `title`, `description`, `sourc
 
 ```bash
 set -a; . .claude/.env; set +a
+export PR_REVIEW_CACHE_DIR="$CACHE_DIR"
 printf '%s|||COMMITS|||%s' "$title $description $source_branch" "$commit_messages_joined" \
   | .claude/tools/extract_pr_links.py
 ```
@@ -138,6 +142,7 @@ Capture as `INITIAL_LINKS`. Extract `jira_keys[].key` → `JIRA_KEYS` list, `con
 
 ```bash
 set -a; . .claude/.env; set +a
+export PR_REVIEW_CACHE_DIR="$CACHE_DIR"
 .claude/tools/jira_fetch_batch.sh $JIRA_KEYS &
 .claude/tools/conf_fetch_batch.sh $CONF_IDS  &
 wait
@@ -151,6 +156,7 @@ For 404s reported in the JSON outputs: note "Not found" and continue. For exit c
 
 ```bash
 set -a; . .claude/.env; set +a
+export PR_REVIEW_CACHE_DIR="$CACHE_DIR"
 .claude/tools/extract_secondary_links.py \
   --fetched-keys="$(echo $JIRA_KEYS | tr ' ' ',')" \
   --fetched-pages="$(echo $CONF_IDS | tr ' ' ',')"
@@ -162,6 +168,7 @@ Capture as `SECONDARY`. Extract `new_jira_keys[].key` → `NEW_KEYS`, `new_conf_
 
 ```bash
 set -a; . .claude/.env; set +a
+export PR_REVIEW_CACHE_DIR="$CACHE_DIR"
 .claude/tools/jira_fetch_batch.sh $NEW_KEYS &
 .claude/tools/conf_fetch_batch.sh $NEW_IDS  &
 wait
@@ -173,6 +180,7 @@ For 404s: note "Not found (secondary link)" and continue.
 
 ```bash
 set -a; . .claude/.env; set +a
+export PR_REVIEW_CACHE_DIR="$CACHE_DIR"
 .claude/tools/build_prefetch_context.py \
   --pr-id="$PR_ID" \
   --title="$title" \
@@ -183,6 +191,12 @@ set -a; . .claude/.env; set +a
 ```
 
 Capture the full output (everything from `---PREFETCHED_CONTEXT_START---` to `---PREFETCHED_CONTEXT_END---`) as `PREFETCHED_CONTEXT`.
+
+Then clean up — nothing downstream re-reads `$CACHE_DIR` (the subagent only ever sees the `PREFETCHED_CONTEXT` text passed in its prompt):
+
+```bash
+rm -rf "$CACHE_DIR"
+```
 
 ---
 

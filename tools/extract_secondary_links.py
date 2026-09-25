@@ -6,23 +6,30 @@ secondary linked resources (remote links, issue links, Confluence body links).
 SCHEMA_IN
   --fetched-keys=K1,K2,...   Comma-separated Jira keys already fetched (skip these)
   --fetched-pages=P1,P2,...  Comma-separated Confluence page IDs already fetched (skip)
-  Reads  /tmp/jira_{KEY}.json              — ticket data
-         /tmp/jira_remotelinks_{KEY}.json  — Jira remote (web) links
-         /tmp/conf_{PAGE_ID}.json          — Confluence pages
-         /tmp/link_registry.json           — via-map written by extract_pr_links.py
+  Reads  $PR_REVIEW_CACHE_DIR/jira_{KEY}.json              — ticket data
+         $PR_REVIEW_CACHE_DIR/jira_remotelinks_{KEY}.json  — Jira remote (web) links
+         $PR_REVIEW_CACHE_DIR/conf_{PAGE_ID}.json          — Confluence pages
+         $PR_REVIEW_CACHE_DIR/link_registry.json           — via-map written by extract_pr_links.py
   env    JIRA_BASE_URL  CONFLUENCE_BASE_URL (optional)
+         PR_REVIEW_CACHE_DIR (required — per-invocation cache dir, see pr-review SKILL.md Step 0)
 
 SCHEMA_OUT  stdout JSON
   {
     "new_jira_keys":     [{ "key": "MA-21", "via": "issue-link:MA-22" }, ...],
     "new_conf_page_ids": [{ "id": "67890",  "via": "jira-remotelink:MA-22" }, ...]
   }
-  Side-effects: appends new entries to /tmp/link_registry.json
+  Side-effects: appends new entries to $PR_REVIEW_CACHE_DIR/link_registry.json
 
-EXIT  0=ok
+EXIT  0=ok  1=missing-cache-dir
 """
 
 import json, os, re, glob, sys
+
+cache_dir = os.environ.get("PR_REVIEW_CACHE_DIR")
+if not cache_dir:
+    print("ERROR: PR_REVIEW_CACHE_DIR must be set (see pr-review SKILL.md Step 0)", file=sys.stderr)
+    sys.exit(1)
+os.makedirs(cache_dir, exist_ok=True)
 
 # ── Args ──────────────────────────────────────────────────────────────────────
 
@@ -49,7 +56,7 @@ conf_host  = _host(conf_base) or jira_host
 
 registry: dict[str, str] = {}
 try:
-    registry = json.load(open("/tmp/link_registry.json"))
+    registry = json.load(open(os.path.join(cache_dir, "link_registry.json")))
 except (FileNotFoundError, json.JSONDecodeError):
     pass
 
@@ -72,7 +79,7 @@ def _add_page(pid: str, via: str) -> None:
 
 # ── 1. Jira remote links → new Confluence page IDs ───────────────────────────
 
-for path in glob.glob("/tmp/jira_remotelinks_*.json"):
+for path in glob.glob(os.path.join(cache_dir, "jira_remotelinks_*.json")):
     key = re.search(r"jira_remotelinks_(.+)\.json$", path)
     if not key:
         continue
@@ -91,7 +98,7 @@ for path in glob.glob("/tmp/jira_remotelinks_*.json"):
 
 # ── 2. Jira issuelinks + parent + epic → new Jira keys ───────────────────────
 
-for path in glob.glob("/tmp/jira_*.json"):
+for path in glob.glob(os.path.join(cache_dir, "jira_*.json")):
     if "remotelinks" in path:
         continue
     key_match = re.search(r"jira_(.+)\.json$", path)
@@ -123,7 +130,7 @@ for path in glob.glob("/tmp/jira_*.json"):
 
 # ── 3. Confluence page bodies → new Confluence page IDs (1 level deep) ────────
 
-for path in glob.glob("/tmp/conf_*.json"):
+for path in glob.glob(os.path.join(cache_dir, "conf_*.json")):
     pid_match = re.search(r"conf_(\d+)\.json$", path)
     if not pid_match:
         continue
@@ -140,7 +147,7 @@ for path in glob.glob("/tmp/conf_*.json"):
 
 # ── Output ────────────────────────────────────────────────────────────────────
 
-with open("/tmp/link_registry.json", "w") as f:
+with open(os.path.join(cache_dir, "link_registry.json"), "w") as f:
     json.dump(registry, f)
 
 print(json.dumps({"new_jira_keys": new_keys, "new_conf_page_ids": new_pages}))

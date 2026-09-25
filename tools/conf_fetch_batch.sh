@@ -4,16 +4,20 @@
 # SCHEMA_IN
 #   $@  Confluence page IDs (integers)
 #   env JIRA_BASE_URL  JIRA_EMAIL  JIRA_API_TOKEN
+#   env PR_REVIEW_CACHE_DIR  — per-invocation cache dir (see pr-review SKILL.md Step 0)
 #
 # SCHEMA_OUT  stdout JSON
 #   { "fetched": ["12345", ...], "not_found": ["99999", ...] }
-#   Side-effects: /tmp/conf_{PAGE_ID}.json per page
+#   Side-effects: $PR_REVIEW_CACHE_DIR/conf_{PAGE_ID}.json per page
 #                 (fields: id, title, space.key, body.export_view.value)
 #
-# EXIT  0=ok (partial not_found in JSON)  1=credential-error (401/403)
+# EXIT  0=ok (partial not_found in JSON)  1=credential-error (401/403)  2=missing-cache-dir
 
 set -uo pipefail
 [[ $# -eq 0 ]] && { echo '{"fetched":[],"not_found":[]}'; exit 0; }
+
+: "${PR_REVIEW_CACHE_DIR:?ERROR: PR_REVIEW_CACHE_DIR must be set (see pr-review SKILL.md Step 0)}"
+mkdir -p "$PR_REVIEW_CACHE_DIR"
 
 CONF_API="${JIRA_BASE_URL}/wiki/rest/api"
 STATUS_DIR=$(mktemp -d)
@@ -24,7 +28,7 @@ fetch_one() {
   sc=$(curl -sS -L -w "%{http_code}" \
     -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" -H "Accept: application/json" \
     "${CONF_API}/content/${ID}?expand=body.export_view,title,space" \
-    -o "/tmp/conf_${ID}.json")
+    -o "${PR_REVIEW_CACHE_DIR}/conf_${ID}.json")
   echo "$sc" > "${STATUS_DIR}/${ID}"
 }
 

@@ -10,17 +10,18 @@ SCHEMA_IN
   --dest-branch=BRANCH
   --source-commit=HASH
   --author=NAME
-  Reads  /tmp/jira_{KEY}.json     — ticket data (all, skipping remotelinks files)
-         /tmp/conf_{PAGE_ID}.json — Confluence pages
-         /tmp/link_registry.json  — via-map (key: "jira:KEY"|"conf:ID", value: via)
+  Reads  $PR_REVIEW_CACHE_DIR/jira_{KEY}.json     — ticket data (all, skipping remotelinks files)
+         $PR_REVIEW_CACHE_DIR/conf_{PAGE_ID}.json — Confluence pages
+         $PR_REVIEW_CACHE_DIR/link_registry.json  — via-map (key: "jira:KEY"|"conf:ID", value: via)
   env    JIRA_BASE_URL  (for constructing Confluence page URLs)
+         PR_REVIEW_CACHE_DIR (required — per-invocation cache dir, see pr-review SKILL.md Step 0)
 
 SCHEMA_OUT  stdout
   ---PREFETCHED_CONTEXT_START---
   ...
   ---PREFETCHED_CONTEXT_END---
 
-EXIT  0=ok  1=bad-args
+EXIT  0=ok  1=bad-args  2=missing-cache-dir
 """
 
 import glob, html, json, os, re, sys
@@ -40,13 +41,18 @@ if missing:
     print(f"ERROR: missing args: {', '.join('--' + m for m in missing)}", file=sys.stderr)
     sys.exit(1)
 
+cache_dir = os.environ.get("PR_REVIEW_CACHE_DIR")
+if not cache_dir:
+    print("ERROR: PR_REVIEW_CACHE_DIR must be set (see pr-review SKILL.md Step 0)", file=sys.stderr)
+    sys.exit(2)
+
 jira_base = os.environ.get("JIRA_BASE_URL", "").rstrip("/")
 
 # ── Load via-map ──────────────────────────────────────────────────────────────
 
 registry: dict[str, str] = {}
 try:
-    registry = json.load(open("/tmp/link_registry.json"))
+    registry = json.load(open(os.path.join(cache_dir, "link_registry.json")))
 except (FileNotFoundError, json.JSONDecodeError):
     pass
 
@@ -155,7 +161,7 @@ signal_texts: list[tuple[str, str]] = []
 
 # ── Jira tickets ──────────────────────────────────────────────────────────────
 
-for path in sorted(glob.glob("/tmp/jira_*.json")):
+for path in sorted(glob.glob(os.path.join(cache_dir, "jira_*.json"))):
     if "remotelinks" in path:
         continue
     key_match = re.search(r"jira_(.+)\.json$", path)
@@ -195,7 +201,7 @@ for path in sorted(glob.glob("/tmp/jira_*.json")):
 
 # ── Confluence pages table ────────────────────────────────────────────────────
 
-conf_files = sorted(glob.glob("/tmp/conf_*.json"))
+conf_files = sorted(glob.glob(os.path.join(cache_dir, "conf_*.json")))
 if conf_files:
     lines.append("CONFLUENCE PAGES:")
     lines.append("| ID | Title | Type | Via | URL |")

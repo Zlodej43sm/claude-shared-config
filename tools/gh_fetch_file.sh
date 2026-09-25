@@ -19,17 +19,20 @@ FILE="${2:?ERROR:   gh_fetch_file.sh requires FILE_PATH as \$2}"
 API="${GITHUB_API_URL:-https://api.github.com}"
 BASE="${API}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents"
 
+TMP_FILE=$(mktemp)
+trap 'rm -f "$TMP_FILE"' EXIT
+
 HTTP_STATUS=$(curl -sSL -w "%{http_code}" \
   -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" \
   --get --data-urlencode "ref=${COMMIT}" \
   "${BASE}/${FILE}" \
-  -o /tmp/gh_file_fetch.tmp)
+  -o "$TMP_FILE")
 
 case "$HTTP_STATUS" in
   200)
     python3 -c "
 import json, base64
-d = json.load(open('/tmp/gh_file_fetch.tmp'))
+d = json.load(open('$TMP_FILE'))
 print(base64.b64decode(d.get('content', '')).decode('utf-8', errors='replace'), end='')
 "
     ;;

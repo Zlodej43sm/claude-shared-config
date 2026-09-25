@@ -7,6 +7,7 @@ SCHEMA_IN
   stdin   concatenated text (title + description + source_branch + commit_messages)
   env     JIRA_BASE_URL           (used to scope Confluence URL matching)
           CONFLUENCE_BASE_URL     (optional; falls back to JIRA_BASE_URL host)
+          PR_REVIEW_CACHE_DIR     (required — per-invocation cache dir, see pr-review SKILL.md Step 0)
 
 SCHEMA_OUT  stdout JSON
   {
@@ -14,12 +15,18 @@ SCHEMA_OUT  stdout JSON
     "conf_page_ids": [{ "id": "12345",  "via": "pr-text" | "commit" }, ...],
     "external_repos": ["../sibling-service", ...]
   }
-  Side-effects: writes /tmp/link_registry.json (initialises via-map for downstream tools)
+  Side-effects: writes $PR_REVIEW_CACHE_DIR/link_registry.json (initialises via-map for downstream tools)
 
-EXIT  0=ok
+EXIT  0=ok  1=missing-cache-dir
 """
 
 import json, os, re, sys
+
+cache_dir = os.environ.get("PR_REVIEW_CACHE_DIR")
+if not cache_dir:
+    print("ERROR: PR_REVIEW_CACHE_DIR must be set (see pr-review SKILL.md Step 0)", file=sys.stderr)
+    sys.exit(1)
+os.makedirs(cache_dir, exist_ok=True)
 
 text = sys.stdin.read()
 
@@ -91,7 +98,7 @@ result = {
 # Initialise link registry for downstream tools
 registry = {f"jira:{k}": v for k, v in seen_keys.items()}
 registry.update({f"conf:{p}": v for p, v in seen_pages.items()})
-with open("/tmp/link_registry.json", "w") as f:
+with open(os.path.join(cache_dir, "link_registry.json"), "w") as f:
     json.dump(registry, f)
 
 print(json.dumps(result))

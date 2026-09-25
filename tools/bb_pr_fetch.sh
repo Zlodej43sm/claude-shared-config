@@ -15,7 +15,7 @@
 #     "author":          string,
 #     "commit_messages": [string, ...]
 #   }
-#   Side-effects: writes /tmp/pr_meta.json  /tmp/pr_commits.json
+#   Side-effects: none (uses private per-invocation temp files, removed on exit)
 #
 # EXIT  0=ok  1=bad-args  2=http-error
 
@@ -25,14 +25,18 @@ PR_ID="${1:?ERROR: bb_pr_fetch.sh requires PR_ID as \$1}"
 BASE="https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/pullrequests"
 AUTH="${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}"
 
-curl -sSL --fail-with-body -u "$AUTH" "${BASE}/${PR_ID}"                     -o /tmp/pr_meta.json    &
-curl -sSL --fail-with-body -u "$AUTH" "${BASE}/${PR_ID}/commits?pagelen=50"  -o /tmp/pr_commits.json &
+TMP_META=$(mktemp)
+TMP_COMMITS=$(mktemp)
+trap 'rm -f "$TMP_META" "$TMP_COMMITS"' EXIT
+
+curl -sSL --fail-with-body -u "$AUTH" "${BASE}/${PR_ID}"                     -o "$TMP_META"    &
+curl -sSL --fail-with-body -u "$AUTH" "${BASE}/${PR_ID}/commits?pagelen=50"  -o "$TMP_COMMITS" &
 wait
 
-python3 - <<'PY'
+python3 - "$TMP_META" "$TMP_COMMITS" <<'PY'
 import json, sys
-meta    = json.load(open("/tmp/pr_meta.json"))
-commits = json.load(open("/tmp/pr_commits.json"))
+meta    = json.load(open(sys.argv[1]))
+commits = json.load(open(sys.argv[2]))
 print(json.dumps({
     "title":           meta["title"],
     "description":     (meta.get("description") or "")[:4000],
