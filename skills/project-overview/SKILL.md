@@ -35,6 +35,10 @@ its own report file (Step 11).
 - The user wants a plain-English doc for one ticket/branch's changes — use
   `feature-doc`.
 - The user wants SonarQube issues triaged — use `sonar-triage`.
+- The user wants a forward-looking, ticket-driven design proposal (architecture,
+  API inventory, proposed directory tree, roadmap) rather than a report of what
+  already exists — use `project-blueprint`, which reuses this skill's scanner
+  for its own repo-inspection step.
 
 ## Input
 

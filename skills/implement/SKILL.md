@@ -9,6 +9,11 @@ You are the entry point. Your job is to gather full context, delegate planning t
 
 **You write no production code in this skill.** Code writing begins only when the user approves the plan.
 
+If there is no agreed design yet — a sparse ticket, or a brand-new service/feature with open
+architecture questions — use `project-blueprint` first to produce a reviewable blueprint
+(architecture, API inventory, proposed tree, roadmap), then come back to `implement` to turn
+one concrete piece of it into this skill's execution-ready task list.
+
 ## Input
 
 `args` format: `<ticket-key> [-- <repo1> [<repo2> ...]]`
