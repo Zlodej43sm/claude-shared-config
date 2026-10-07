@@ -6,7 +6,15 @@ model: sonnet
 color: blue
 ---
 
-You are invoked by the `/answer-pr-comments` skill, which has already resolved the `host` (`bitbucket`|`github`), PR id, reviewer filter, and `dry_run` flag. Your job is to research every unanswered comment, compose an accurate reply, and post it (unless `dry_run: true`).
+You are invoked by the `/answer-pr-comments` skill, which has already resolved the `host` (`bitbucket`|`github`), PR id, reviewer filter, `dry_run` flag, `cache_dir` and `mode`.
+
+Modes:
+
+| `mode`    | What you do                                                                                                           |
+| --------- | --------------------------------------------------------------------------------------------------------------------- |
+| `reply`   | Default. Steps 0–5: research every unanswered comment, compose a reply, post it (unless `dry_run: true`).             |
+| `collect` | Steps 0–1 only: write `<cache_dir>/cr_unanswered_{pr_id}.json` and report it. No research, no replies, nothing posted. The skill's `--fix` flow uses this, then edits code itself and comes back with `post`. |
+| `post`    | Step 5 only, for replies the skill composed after fixing code: read `replies_file`, post each reply threaded under its comment. Skips any comment that has been answered since collection. |
 
 Your final message to the skill is a plain-text completion summary — NOT JSON.
 
@@ -17,6 +25,8 @@ Your final message to the skill is a plain-text completion summary — NOT JSON.
 ```bash
 set -a; . .claude/.env; set +a
 ```
+
+`cache_dir` is a private per-invocation directory the skill created; write every intermediate file there, never to a fixed `/tmp` name.
 
 Required: when `host=bitbucket` — `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`. When `host=github` — `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`GITHUB_API_URL` optional). Missing key → fail loud, stop.
 
@@ -32,34 +42,59 @@ Send **one message** with these calls in parallel:
    - `host=bitbucket`: `GET https://api.bitbucket.org/2.0/repositories/$BITBUCKET_WORKSPACE/$BITBUCKET_REPO_SLUG/pullrequests/{pr_id}`, auth `-sS --fail-with-body -L -u "$BITBUCKET_EMAIL:$BITBUCKET_API_TOKEN"`.
    - `host=github`: `GET ${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_OWNER/$GITHUB_REPO/pulls/{pr_id}`, auth `-sS --fail-with-body -L -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json"`.
 
-2. **All comments** — save to disk to keep large payloads out of context:
+2. **All comments, every page** — save to disk to keep large payloads out of context. A PR with more than one page of comments is common; reading only the first page silently drops the rest.
 
-    ```bash
-    # host=bitbucket — one endpoint covers both inline and general comments
-    curl -sS --fail-with-body -L -u "$BITBUCKET_EMAIL:$BITBUCKET_API_TOKEN" \
-      "https://api.bitbucket.org/2.0/repositories/$BITBUCKET_WORKSPACE/$BITBUCKET_REPO_SLUG/pullrequests/{pr_id}/comments?pagelen=100&q=deleted=false" \
-      -o /tmp/cr_{pr_id}.json
+    ```python
+    import json, os, base64, urllib.request
 
-    # host=github — two kinds, fetched separately: inline review comments
-    # (support in_reply_to_id threading, GitHub's closest analogue to
-    # Bitbucket's inline/parent model) and general issue-thread comments.
-    curl -sS --fail-with-body -L -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
-      "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_OWNER/$GITHUB_REPO/pulls/{pr_id}/comments?per_page=100" \
-      -o /tmp/cr_{pr_id}_review.json
-    curl -sS --fail-with-body -L -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
-      "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_OWNER/$GITHUB_REPO/issues/{pr_id}/comments?per_page=100" \
-      -o /tmp/cr_{pr_id}_issue.json
+    cache  = "{cache_dir}"
+    pr_id  = "{pr_id}"
+    host   = "{host}"
+
+    def get(url, headers):
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers)) as resp:
+            return json.load(resp)
+
+    if host == "bitbucket":
+        auth = base64.b64encode(f"{os.environ['BITBUCKET_EMAIL']}:{os.environ['BITBUCKET_API_TOKEN']}".encode()).decode()
+        headers = {"Authorization": f"Basic {auth}"}
+        # one endpoint covers both inline and general comments; follow `next` until it is absent
+        url = (f"https://api.bitbucket.org/2.0/repositories/{os.environ['BITBUCKET_WORKSPACE']}/"
+               f"{os.environ['BITBUCKET_REPO_SLUG']}/pullrequests/{pr_id}/comments?pagelen=100&q=deleted%3Dfalse")
+        values = []
+        while url:
+            page = get(url, headers)
+            values += page["values"]
+            url = page.get("next")
+        json.dump({"values": values}, open(f"{cache}/cr_{pr_id}.json", "w"))
+    else:
+        api = os.environ.get("GITHUB_API_URL") or "https://api.github.com"
+        base = f"{api}/repos/{os.environ['GITHUB_OWNER']}/{os.environ['GITHUB_REPO']}"
+        headers = {"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}", "Accept": "application/vnd.github+json"}
+        # two kinds, fetched separately: inline review comments (in_reply_to_id threading, the closest
+        # analogue to Bitbucket's inline/parent model) and general issue-thread comments
+        for kind, path in (("review", f"pulls/{pr_id}/comments"), ("issue", f"issues/{pr_id}/comments")):
+            items, page = [], 1
+            while True:
+                chunk = get(f"{base}/{path}?per_page=100&page={page}", headers)
+                items += chunk
+                if len(chunk) < 100:
+                    break
+                page += 1
+            json.dump(items, open(f"{cache}/cr_{pr_id}_{kind}.json", "w"))
+    print("fetched")
     ```
 
-3. **Changed files** — `git diff --name-only origin/develop..HEAD`
+3. **Changed files** — `git diff --name-only origin/{dest_branch}..HEAD` (`dest_branch` is the PR's destination branch from the metadata above)
 
-4. **Recent commits** — `git log --oneline origin/develop..HEAD`
+4. **Recent commits** — `git log --oneline origin/{dest_branch}..HEAD`
 
 Then run this Python snippet to extract unanswered comments:
 
 ```python
 import json
 
+cache           = "{cache_dir}"
 pr_id           = "{pr_id}"
 host            = "{host}"                    # "bitbucket" | "github"
 reviewer_filter = "{reviewer_filter}"          # empty = all human reviewers
@@ -70,9 +105,9 @@ BOT_KEYWORDS = ["orca", "sast", "bot", "automated", "pipeline"]
 unanswered = []
 
 if host == "github":
-    with open(f"/tmp/cr_{pr_id}_review.json") as f:
+    with open(f"{cache}/cr_{pr_id}_review.json") as f:
         review_cmts = json.load(f)
-    with open(f"/tmp/cr_{pr_id}_issue.json") as f:
+    with open(f"{cache}/cr_{pr_id}_issue.json") as f:
         issue_cmts = json.load(f)
 
     # Inline review comments: in_reply_to_id gives the same reply-chain signal
@@ -117,8 +152,10 @@ if host == "github":
             "file": "", "line": "", "text": c["body"],
         })
 else:
-    with open(f"/tmp/cr_{pr_id}.json") as f:
+    with open(f"{cache}/cr_{pr_id}.json") as f:
         all_cmts = json.load(f)["values"]
+
+    by_id = {c["id"]: c for c in all_cmts}
 
     # IDs that already have a reply from the PR author
     replied_to = {
@@ -137,7 +174,19 @@ else:
             continue
         if c["id"] in replied_to:
             continue
+        # A thread the reviewer or author already resolved needs no reply (field is absent when
+        # the workspace does not use resolution).
+        if c.get("resolution"):
+            continue
         inline = c.get("inline", {})
+        # Earlier messages of the same thread, oldest first, so a reply to a reply has its context.
+        thread, parent = [], c.get("parent")
+        while parent:
+            p = by_id.get(parent["id"])
+            if not p:
+                break
+            thread.insert(0, f"{p['user'].get('display_name', '')}: {p['content']['raw']}")
+            parent = p.get("parent")
         unanswered.append({
             "id":     c["id"],
             "kind":   "bitbucket",
@@ -145,9 +194,10 @@ else:
             "file":   inline.get("path", ""),
             "line":   inline.get("to") or inline.get("from") or "",
             "text":   c["content"]["raw"],
+            "thread": thread,
         })
 
-with open(f"/tmp/cr_unanswered_{pr_id}.json", "w") as f:
+with open(f"{cache}/cr_unanswered_{pr_id}.json", "w") as f:
     json.dump(unanswered, f, indent=2)
 
 print(f"Unanswered: {len(unanswered)}")
@@ -157,6 +207,10 @@ for c in unanswered:
 
 If `unanswered` is empty → report "No unanswered reviewer comments found on PR #{pr_id}." and stop.
 
+An inline comment's `line` is the line in the commit it was written on; the file may have moved on since. Locate the code by its content (grep for the identifier the comment names), not by the line number alone.
+
+**`mode: collect` stops here.** Final message: the path `<cache_dir>/cr_unanswered_{pr_id}.json` and the same one-line-per-comment listing. Do not research, compose or post.
+
 ---
 
 ## Step 2 — Load review docs and diff context
@@ -165,7 +219,7 @@ Run in parallel:
 
 1. **Review docs** — glob `.claude/reviews/pr-{pr_id}*.md`. Read every match in full. These capture prior decisions, deferred items, and intentional choices — treat them as authoritative context for reply composition.
 
-2. **Diff stat** — `git diff --stat origin/develop..HEAD`
+2. **Diff stat** — `git diff --stat origin/{dest_branch}..HEAD`
 
 3. **Latest commit** — `git show --stat HEAD` — shows what changed most recently, useful for confirming recent fixes.
 
@@ -219,6 +273,8 @@ Use one of these openers. **Match to reality** — only say "Fixed" when the fix
 ---
 
 ## Step 5 — Post or dry-run
+
+In `mode: post`, skip Steps 1–4: `replies_file` is a JSON list of `{id, kind, reply, text}` composed by the skill after it fixed the code. First re-fetch the comments (Step 1, item 2) and drop any `id` that now has a reply from the PR author, so a retry never double-posts; then post the rest exactly as below.
 
 ### If `dry_run: true`
 

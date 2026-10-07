@@ -61,7 +61,7 @@ Invoked as `/<skill-name>` (or by the natural-language triggers noted below), un
 
 | Skill | What it does | When it's used |
 | --- | --- | --- |
-| `answer-pr-comments` | Composes and posts replies to unanswered human reviewer comments on a Bitbucket or GitHub PR; delegates the fetch/research/compose/post cycle to the `comment-responder` agent. | `/answer-pr-comments <pr-number> [<reviewer-name>] [--dry-run]` |
+| `answer-pr-comments` | Answers unanswered human reviewer comments on a Bitbucket or GitHub PR. Default: composes and posts replies via the `comment-responder` agent. With `--fix`: verifies each comment against the code, fixes the valid ones, declines the rest with evidence, runs the project's checks, then commits, pushes and posts after one confirmation. | `/answer-pr-comments <pr-number> [<reviewer-name>] [--dry-run] [--fix]` |
 | `caveman` | Token-efficient caveman-mode responses (~75% fewer tokens, full technical accuracy). | `/caveman`, or saying "less tokens" / "be brief"; stays active until "stop caveman" / "normal mode" |
 | `create-jira-task` | Creates one or more Jira issues (default type Task), optionally as children of a parent issue such as an Epic. A real **write** operation against Jira Cloud. | `/create-jira-task [--parent=KEY] [--project=KEY] [--issuetype=NAME] [--dry-run]` |
 | `feature-doc` | Generates a plain-English feature doc from the current branch's Jira ticket and diff, readable by QA/PMs/tech leads without code knowledge. | `/feature-doc [ticket-key] [output-path]` |
@@ -81,7 +81,7 @@ Subagents invoked by the skills above — not called directly by name.
 
 | Agent | What it does | Invoked by |
 | --- | --- | --- |
-| `comment-responder` | Fetches unanswered PR comments, reads the current state of each referenced file and any `.claude/reviews/` analysis, composes accurate Fixed/Deferred/Answered replies, and posts them. | `answer-pr-comments` |
+| `comment-responder` | Fetches unanswered PR comments (all pages), reads the current state of each referenced file and any `.claude/reviews/` analysis, composes accurate Fixed/Deferred/Answered replies, and posts them. Also runs as `collect` (fetch only) and `post` (post pre-composed replies, skipping answered ones) for the `--fix` flow. | `answer-pr-comments` |
 | `feature-planner` | Architect-level planner: takes a fully-populated Jira context block plus codebase access and produces a concrete implementation plan saved to `.claude/plans/`. Writes no production code. | `implement` |
 | `jira-context` | Fetches a Jira ticket and exhaustively pulls every referenced Confluence page (two levels deep), full bodies, classified by type; also reads `CLAUDE.md` from the primary and any related repos. | `get-jira-task`, `implement`, `pr-review` |
 | `pr-reviewer` | Reviews a Bitbucket or GitHub PR end-to-end: fetches diff/commits/comments/Jira context, classifies changed files, reads the working tree, and returns one structured review. Read-only. | `pr-review` |
