@@ -4,8 +4,11 @@
 # Usage: bin/link-project.sh <path-to-project-repo>
 #
 # - Symlinks .claude/{skills,agents,tools,hooks,workflows} to this repo's copies.
-# - Generates <project>/.mcp.json from mcp.json.template (a real file, not a
-#   symlink, in case an MCP client requires that).
+# - Generates <project>/.mcp.json (a real file, not a symlink, in case an MCP
+#   client requires that) from mcp.json.template plus the mcp.d/ fragments that
+#   match the project: GitHub MCP when the git host is GitHub, Notion MCP when
+#   NOTION_TOKEN is set in .claude/.env. Re-run after changing either; a file
+#   this script generated is regenerated, a hand-edited one is never touched.
 # - Generates <project>/.claude/settings.json from settings.json.template the
 #   same way, only if one doesn't already exist — once generated, a project is
 #   free to diverge from the template (different permissions, extra hooks) and
@@ -43,16 +46,34 @@ for name in skills agents tools hooks workflows; do
   echo "linked $target -> $SHARED_DIR/$name"
 done
 
+# .mcp.json = mcp.json.template + the servers this project's git host / env call
+# for (see bin/render-mcp.py). The hash of the last file we wrote is stamped so a
+# later re-run (after GIT_HOST or NOTION_TOKEN changes) can regenerate it, while
+# a hand-edited .mcp.json is still never overwritten.
+MCP_STAMP="$CLAUDE_DIR/.mcp.generated.sha256"
+RENDERED="$(mktemp)"
+trap 'rm -f "$RENDERED"' EXIT
+python3 "$SHARED_DIR/bin/render-mcp.py" "$PROJECT_DIR" > "$RENDERED"
+sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
+
 if [ -e "$PROJECT_DIR/.mcp.json" ]; then
-  if cmp -s "$SHARED_DIR/mcp.json.template" "$PROJECT_DIR/.mcp.json"; then
-    echo "existing .mcp.json matches template; left unchanged"
+  if cmp -s "$RENDERED" "$PROJECT_DIR/.mcp.json"; then
+    sha "$RENDERED" > "$MCP_STAMP"
+    echo "existing .mcp.json matches what this project needs; left unchanged"
+  elif cmp -s "$SHARED_DIR/mcp.json.template" "$PROJECT_DIR/.mcp.json" \
+      || { [ -f "$MCP_STAMP" ] && [ "$(cat "$MCP_STAMP")" = "$(sha "$PROJECT_DIR/.mcp.json")" ]; }; then
+    cp "$RENDERED" "$PROJECT_DIR/.mcp.json"
+    sha "$RENDERED" > "$MCP_STAMP"
+    echo "regenerated $PROJECT_DIR/.mcp.json (it was an untouched generated file; MCP servers updated for this project)"
   else
-    echo "refusing to overwrite existing .mcp.json: $PROJECT_DIR/.mcp.json" >&2
+    echo "refusing to overwrite hand-edited .mcp.json: $PROJECT_DIR/.mcp.json" >&2
+    echo "  merge in the servers from: python3 $SHARED_DIR/bin/render-mcp.py $PROJECT_DIR" >&2
     exit 1
   fi
 else
-  cp "$SHARED_DIR/mcp.json.template" "$PROJECT_DIR/.mcp.json"
-  echo "generated $PROJECT_DIR/.mcp.json from mcp.json.template"
+  cp "$RENDERED" "$PROJECT_DIR/.mcp.json"
+  sha "$RENDERED" > "$MCP_STAMP"
+  echo "generated $PROJECT_DIR/.mcp.json"
 fi
 
 if [ -e "$CLAUDE_DIR/settings.json" ]; then

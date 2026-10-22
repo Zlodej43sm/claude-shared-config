@@ -88,6 +88,23 @@ def detect_git_host(env: dict[str, str]) -> str | None:
     return None
 
 
+def warn_mcp_drift(project_root: Path, host: str | None, env: dict[str, str]) -> None:
+    """.mcp.json is generated once by bin/link-project.sh; if the project's git
+    host or NOTION_TOKEN changed since, the matching MCP server is missing."""
+    mcp_path = project_root / ".mcp.json"
+    if not mcp_path.is_file():
+        return
+    try:
+        servers = json.loads(mcp_path.read_text(encoding="utf-8")).get("mcpServers", {})
+    except (OSError, json.JSONDecodeError):
+        return
+    if host == "github" and "github" not in servers:
+        warn("git host is github but .mcp.json has no 'github' MCP server; re-run bin/link-project.sh")
+    notion = env.get("NOTION_TOKEN", "").strip()
+    if notion and not looks_like_placeholder(notion) and "notion" not in servers:
+        warn("NOTION_TOKEN is set but .mcp.json has no 'notion' MCP server; re-run bin/link-project.sh")
+
+
 def parse_env_file(path: Path) -> dict[str, str]:
     env: dict[str, str] = {}
     for raw in path.read_text(encoding="utf-8").splitlines():
@@ -174,6 +191,10 @@ def main() -> int:
             warn(f"required key {key} missing from .claude/.env")
         elif looks_like_placeholder(value):
             warn(f"required key {key} still looks like a placeholder ({value!r})")
+
+    if env.get("NOTION_TOKEN") and looks_like_placeholder(env["NOTION_TOKEN"]):
+        warn(f"NOTION_TOKEN still looks like a placeholder ({env['NOTION_TOKEN']!r})")
+    warn_mcp_drift(project_root, host, env)
 
     settings: dict = {}
     if settings_path.is_file():
