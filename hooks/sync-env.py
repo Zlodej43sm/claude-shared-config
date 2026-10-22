@@ -11,6 +11,12 @@ Behavior:
   merges the unresolved op:// string as-is (skills needing that key will then fail
   the same way they would with a missing/placeholder value today).
 - Merges into settings.local.json `env` (values from .env win on conflict).
+- ANTHROPIC_API_KEY: when .env holds a usable key it is merged like the rest, so
+  Claude Code authenticates with it from the next session start (before this hook
+  runs the session is already signed in, so the first session still uses the login)
+  and every skill/agent that calls the Anthropic API inherits it. A placeholder,
+  empty or unresolved op:// value is never merged (it would break auth instead of
+  falling back to the login).
 - Warns on stderr if .env is missing, unparseable, or required keys are absent /
   still placeholders. Never blocks the session.
 """
@@ -19,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -40,6 +47,11 @@ JIRA_KEYS = (
     "JIRA_BASE_URL",
 )
 JIRA_CREDENTIAL_KEYS = ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")  # optional: else atlassian-oauth
+ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
+# Registered as `apiKeyHelper` next to the env var: Claude Code asks once whether to use an
+# env-provided key and remembers a "No" per key (customApiKeyResponses.rejected in
+# ~/.claude.json), silently falling back to the claude.ai login. A helper has no prompt.
+API_KEY_HELPER = f"printenv {ANTHROPIC_KEY}"
 PLACEHOLDER_PATTERNS = (
     "replace-with-",
     "your-",
@@ -52,6 +64,38 @@ def usable_secret(value: str) -> bool:
     """A real value: set, not a template placeholder, not an unresolved op:// ref."""
     value = value.strip()
     return bool(value) and not looks_like_placeholder(value) and not value.startswith("op://")
+
+
+def drop_unusable_anthropic_key(env: dict[str, str], current_env: dict[str, str]) -> None:
+    """An ANTHROPIC_API_KEY that is empty, a template placeholder or an unresolved op://
+    ref must not reach the session env: Claude Code would prefer it over the login and
+    every request would fail. Drop it from `env`, and from the previously synced
+    settings.local.json `env` too when that copy is equally unusable."""
+    if ANTHROPIC_KEY not in env or usable_secret(env[ANTHROPIC_KEY]):
+        return
+    warn(f"{ANTHROPIC_KEY} in .claude/.env is empty/placeholder/unresolved — ignoring it; "
+         "Claude Code keeps using your `claude` login")
+    del env[ANTHROPIC_KEY]
+    if not usable_secret(current_env.get(ANTHROPIC_KEY, "x")):
+        current_env.pop(ANTHROPIC_KEY, None)
+
+
+def apply_api_key_helper(settings: dict, env: dict[str, str]) -> bool:
+    """Set `apiKeyHelper` while a usable ANTHROPIC_API_KEY is synced; remove it again
+    (only if it is ours) once there is none. A helper the user set themselves is kept.
+    Returns True if settings changed."""
+    has_key = usable_secret(env.get(ANTHROPIC_KEY, ""))
+    current = settings.get("apiKeyHelper")
+    if has_key and current != API_KEY_HELPER:
+        if current:
+            warn(f"apiKeyHelper already set ({current!r}); leaving it alone")
+            return False
+        settings["apiKeyHelper"] = API_KEY_HELPER
+        return True
+    if not has_key and current == API_KEY_HELPER:
+        del settings["apiKeyHelper"]
+        return True
+    return False
 
 
 def gh_auth_token() -> str:
@@ -210,6 +254,25 @@ def resolve_op_refs(env: dict[str, str]) -> dict[str, str]:
     return resolved
 
 
+def export_to_session(env: dict[str, str]) -> None:
+    """Make the keys visible to Bash/skill/agent calls in *this* session. Claude Code
+    reads settings.local.json `env` before this hook runs, so that merge only helps
+    from the next session; CLAUDE_ENV_FILE is sourced before each Bash command now."""
+    target = os.environ.get("CLAUDE_ENV_FILE")
+    if not target:
+        return
+    lines = [
+        f"export {k}={shlex.quote(v)}"
+        for k, v in env.items()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and not v.startswith("op://")
+    ]
+    try:
+        with open(target, "a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except OSError as exc:
+        warn(f"could not write CLAUDE_ENV_FILE ({exc}); keys apply from the next session")
+
+
 def main() -> int:
     project_root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     env_path = project_root / ".claude" / ".env"
@@ -280,17 +343,24 @@ def main() -> int:
             warn(f"{settings_path} is not valid JSON ({exc}); skipping to avoid corruption.")
             return 0
 
-    current_env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+    current_env = dict(settings["env"]) if isinstance(settings.get("env"), dict) else {}
+    original_env = dict(current_env)
+    drop_unusable_anthropic_key(env, current_env)
+    export_to_session(env)
+
     merged = {**current_env, **env}
-    env_changed = merged != current_env
+    env_changed = merged != original_env
     mcp_changed = apply_mcp_servers(project_root, settings, unused_mcp_servers(host, env))
-    if not (env_changed or mcp_changed):
+    helper_changed = apply_api_key_helper(settings, merged)
+    if not (env_changed or mcp_changed or helper_changed):
         return 0
 
     settings["env"] = merged
     settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     if env_changed:
         warn(f"synced {len(env)} vars from .claude/.env into settings.local.json")
+    if helper_changed:
+        warn("updated apiKeyHelper in settings.local.json (takes effect next session)")
     if mcp_changed:
         warn("updated enabled/disabledMcpjsonServers in settings.local.json (takes effect next session)")
     return 0

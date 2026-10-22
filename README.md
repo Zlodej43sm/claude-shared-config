@@ -187,6 +187,17 @@ server), then:
   missing `GITHUB_TOKEN` from `gh auth token`. Claude Code reads the lists at startup, so a
   change applies from the *next* session start. Entries you add yourself for other servers
   are left alone.
+
+  It also handles `ANTHROPIC_API_KEY`: a real key in `.claude/.env` is merged into
+  `settings.local.json` `env` (and exported to the current session's Bash calls), so Claude
+  Code authenticates with it from the next session start and skills/agents calling the
+  Anthropic API inherit it. An empty, placeholder or unresolved `op://` value is ignored
+  (and removed from `settings.local.json` if it was synced earlier) so a bad key never
+  shadows your `claude` login. It also sets `apiKeyHelper` (`printenv ANTHROPIC_API_KEY`)
+  while a usable key is synced: Claude Code remembers a "No" to its "use this API key?"
+  prompt per key (`customApiKeyResponses.rejected` in `~/.claude.json`) and then silently
+  falls back to the login, whereas a helper has no prompt. A helper you set yourself is
+  left alone, and ours is removed again when the key goes away.
 - `settings.json.template` — generated (copied, not symlinked) into a project's
   `.claude/settings.json` the first time it's linked, the same way as `.mcp.json`
   above. Only generated when no `settings.json` exists yet; once a project has one,
