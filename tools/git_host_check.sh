@@ -4,7 +4,8 @@
 # SCHEMA_IN
 #   env GIT_HOST (optional)  BITBUCKET_WORKSPACE  BITBUCKET_REPO_SLUG  BITBUCKET_EMAIL  BITBUCKET_API_TOKEN
 #   env GITHUB_OWNER  GITHUB_REPO  GITHUB_TOKEN  GITHUB_API_URL (optional)
-#   reads $CLAUDE_PROJECT_DIR/.mcp.json (or ./.mcp.json) to report MCP wiring
+#   reads .mcp.json and .claude/settings.local.json under $CLAUDE_PROJECT_DIR (or cwd)
+#   to report whether the github MCP server is present and enabled
 #
 # SCHEMA_OUT  stdout JSON
 #   { "host": "bitbucket"|"github"|null,
@@ -80,16 +81,25 @@ else:
         api["detail"] = f"network error: {getattr(e, 'reason', e)}"
 
 project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+# The "github" server ships in mcp.json.template for every project; hooks/sync-env.py
+# disables it (settings.local.json disabledMcpjsonServers) when the host isn't github.
 mcp = {"file": False, "expected": "github" if host == "github" else None, "configured": host != "github"}
 mcp_path = project / ".mcp.json"
 if mcp_path.is_file():
     mcp["file"] = True
-    try:
-        servers = json.loads(mcp_path.read_text()).get("mcpServers", {})
-        if host == "github":
-            mcp["configured"] = "github" in servers
-    except json.JSONDecodeError:
-        mcp["configured"] = False
+    if host == "github":
+        try:
+            in_file = "github" in json.loads(mcp_path.read_text()).get("mcpServers", {})
+        except json.JSONDecodeError:
+            in_file = False
+        disabled = []
+        local = project / ".claude" / "settings.local.json"
+        if local.is_file():
+            try:
+                disabled = json.loads(local.read_text()).get("disabledMcpjsonServers", [])
+            except json.JSONDecodeError:
+                pass
+        mcp["configured"] = in_file and "github" not in disabled
 
 print(json.dumps({
     "host": host,

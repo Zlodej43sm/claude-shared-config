@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -37,15 +38,43 @@ GITHUB_KEYS = (
 JIRA_KEYS = (
     "JIRA_WORKSPACE",
     "JIRA_BASE_URL",
-    "JIRA_EMAIL",
-    "JIRA_API_TOKEN",
 )
+JIRA_CREDENTIAL_KEYS = ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")  # optional: else atlassian-oauth
 PLACEHOLDER_PATTERNS = (
     "replace-with-",
     "your-",
     "your.name@",
     "_here",
 )
+
+
+def usable_secret(value: str) -> bool:
+    """A real value: set, not a template placeholder, not an unresolved op:// ref."""
+    value = value.strip()
+    return bool(value) and not looks_like_placeholder(value) and not value.startswith("op://")
+
+
+def gh_auth_token() -> str:
+    """Token of the user's `gh auth login` session (browser/device sign-in), or ''."""
+    gh = shutil.which("gh")
+    if not gh:
+        return ""
+    try:
+        result = subprocess.run([gh, "auth", "token"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def github_remote_slug() -> tuple[str, str] | None:
+    """(owner, repo) parsed from the origin URL when it points at github.com."""
+    try:
+        url = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True,
+                             text=True, timeout=5).stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    m = re.search(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", url)
+    return (m.group(1), m.group(2)) if m else None
 
 
 def warn(msg: str) -> None:
@@ -88,21 +117,51 @@ def detect_git_host(env: dict[str, str]) -> str | None:
     return None
 
 
-def warn_mcp_drift(project_root: Path, host: str | None, env: dict[str, str]) -> None:
-    """.mcp.json is generated once by bin/link-project.sh; if the project's git
-    host or NOTION_TOKEN changed since, the matching MCP server is missing."""
+def unused_mcp_servers(host: str | None, env: dict[str, str]) -> set[str]:
+    """MCP servers from mcp.json.template this project doesn't use. Where a service
+    has an API-key server and a hosted browser-sign-in (OAuth) server, the key wins
+    when usable credentials exist, otherwise the OAuth one is on:
+      - atlassian (JIRA_BASE_URL + JIRA_EMAIL + JIRA_API_TOKEN) / atlassian-oauth
+      - notion (NOTION_TOKEN) / notion-oauth; NOTION_MCP=off disables both
+      - github only when the git host is github (its token may come from `gh auth
+        login`, see main()); Bitbucket has no MCP server — the PR skills use
+        tools/bb_*.sh.
+    sonarqube stays on."""
+    unused: set[str] = set()
+    if host != "github":
+        unused.add("github")
+    unused.add("atlassian-oauth" if all(usable_secret(env.get(k, "")) for k in JIRA_CREDENTIAL_KEYS) else "atlassian")
+    if env.get("NOTION_MCP", "").strip().lower() == "off":
+        unused |= {"notion", "notion-oauth"}
+    else:
+        unused.add("notion-oauth" if usable_secret(env.get("NOTION_TOKEN", "")) else "notion")
+    return unused
+
+
+def apply_mcp_servers(project_root: Path, settings: dict, unused: set[str]) -> bool:
+    """Approve the project's .mcp.json servers (no manual approval prompt) and
+    disable the unused ones, via enabled/disabledMcpjsonServers in
+    settings.local.json. Touches only servers named in .mcp.json; entries the
+    user added for other servers are kept. Returns True if settings changed.
+    Takes effect from the next session start (servers are already launched when
+    this hook runs)."""
     mcp_path = project_root / ".mcp.json"
     if not mcp_path.is_file():
-        return
+        return False
     try:
-        servers = json.loads(mcp_path.read_text(encoding="utf-8")).get("mcpServers", {})
+        names = set(json.loads(mcp_path.read_text(encoding="utf-8")).get("mcpServers", {}))
     except (OSError, json.JSONDecodeError):
-        return
-    if host == "github" and "github" not in servers:
-        warn("git host is github but .mcp.json has no 'github' MCP server; re-run bin/link-project.sh")
-    notion = env.get("NOTION_TOKEN", "").strip()
-    if notion and not looks_like_placeholder(notion) and "notion" not in servers:
-        warn("NOTION_TOKEN is set but .mcp.json has no 'notion' MCP server; re-run bin/link-project.sh")
+        return False
+    disabled_now = unused & names
+    enabled = [n for n in settings.get("enabledMcpjsonServers", []) if n not in names]
+    disabled = [n for n in settings.get("disabledMcpjsonServers", []) if n not in names]
+    enabled += sorted(names - disabled_now)
+    disabled += sorted(disabled_now)
+    changed = (settings.get("enabledMcpjsonServers") != enabled
+               or settings.get("disabledMcpjsonServers") != disabled)
+    settings["enabledMcpjsonServers"] = enabled
+    settings["disabledMcpjsonServers"] = disabled
+    return changed
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -185,6 +244,24 @@ def main() -> int:
         )
         required_keys = JIRA_KEYS
 
+    if host == "github":
+        slug = github_remote_slug()
+        for key, val in zip(("GITHUB_OWNER", "GITHUB_REPO"), slug or ()):
+            if not usable_secret(env.get(key, "")):
+                env[key] = val
+                warn(f"{key} not set — using {val!r} from the origin remote")
+        if not usable_secret(env.get("GITHUB_TOKEN", "")):
+            token = gh_auth_token()
+            if token:
+                env["GITHUB_TOKEN"] = token
+                warn("GITHUB_TOKEN not set — using your `gh auth login` session")
+            else:
+                warn("GITHUB_TOKEN not set and no `gh auth login` session — run `gh auth login` (browser sign-in) or set GITHUB_TOKEN")
+
+    if not all(usable_secret(env.get(k, "")) for k in JIRA_CREDENTIAL_KEYS):
+        warn("no usable JIRA_EMAIL/JIRA_API_TOKEN — Jira/Confluence use browser sign-in: /mcp > atlassian-oauth > Authenticate. "
+             "REST-only features (ticket image attachments, REST fallback, PR-review Jira preflight) need an API token")
+
     for key in required_keys:
         value = env.get(key, "")
         if not value:
@@ -194,7 +271,6 @@ def main() -> int:
 
     if env.get("NOTION_TOKEN") and looks_like_placeholder(env["NOTION_TOKEN"]):
         warn(f"NOTION_TOKEN still looks like a placeholder ({env['NOTION_TOKEN']!r})")
-    warn_mcp_drift(project_root, host, env)
 
     settings: dict = {}
     if settings_path.is_file():
@@ -206,12 +282,17 @@ def main() -> int:
 
     current_env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
     merged = {**current_env, **env}
-    if merged == current_env:
+    env_changed = merged != current_env
+    mcp_changed = apply_mcp_servers(project_root, settings, unused_mcp_servers(host, env))
+    if not (env_changed or mcp_changed):
         return 0
 
     settings["env"] = merged
     settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    warn(f"synced {len(env)} vars from .claude/.env into settings.local.json")
+    if env_changed:
+        warn(f"synced {len(env)} vars from .claude/.env into settings.local.json")
+    if mcp_changed:
+        warn("updated enabled/disabledMcpjsonServers in settings.local.json (takes effect next session)")
     return 0
 
 

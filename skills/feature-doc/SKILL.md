@@ -43,7 +43,7 @@ Determine the output path:
 
 ## Step 2 — Fetch the Jira ticket
 
-Call `mcp__atlassian__jira_get_issue` with the resolved key. If it fails, fall back to JQL search via `mcp__atlassian__jira_search`. Extract:
+Call `mcp__atlassian__jira_get_issue` with the resolved key. If it fails, fall back to JQL search via `mcp__atlassian__jira_search`. With no API-token server (browser sign-in instead), use the hosted server: `getAccessibleAtlassianResources` once for the `cloudId`, then `getJiraIssue` (`mcp__atlassian-oauth__*` or the claude.ai connector). Extract:
 
 - Summary (title)
 - Status
@@ -51,7 +51,7 @@ Call `mcp__atlassian__jira_get_issue` with the resolved key. If it fails, fall b
 - Acceptance criteria (look for an "Acceptance Criteria" heading inside the description)
 - Any linked Confluence page URLs (scan description for links starting with `$CONFLUENCE_BASE_URL`)
 
-If a Confluence URL is found, fetch it via `mcp__atlassian__confluence_get_page` and include the content in the context passed to the subagent.
+If a Confluence URL is found, fetch it via `mcp__atlassian__confluence_get_page` (hosted server: `getConfluenceContent` with the same `cloudId`) and include the content in the context passed to the subagent.
 
 On MCP unavailability: fall back to curl.
 

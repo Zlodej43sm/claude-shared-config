@@ -1,3 +1,6 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# Generated into projects from mcp.json.template by bin/link-project.sh
+/.mcp.json

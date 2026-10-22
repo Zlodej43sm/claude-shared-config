@@ -1,38 +1,65 @@
 {
   "mcpServers": {
     "atlassian": {
-      "command": "uvx",
-      "args": ["mcp-atlassian"],
-      "env": {
-        "JIRA_URL": "${JIRA_BASE_URL}",
-        "JIRA_USERNAME": "${JIRA_EMAIL}",
-        "JIRA_API_TOKEN": "${JIRA_API_TOKEN}",
-        "CONFLUENCE_URL": "${CONFLUENCE_BASE_URL}",
-        "CONFLUENCE_USERNAME": "${JIRA_EMAIL}",
-        "CONFLUENCE_API_TOKEN": "${JIRA_API_TOKEN}",
-        "ENABLED_TOOLS": "jira_get_issue,jira_search,confluence_get_page,confluence_search"
-      }
+      "command": "python3",
+      "args": [
+        ".claude/tools/mcp-run.py",
+        "--env", "JIRA_URL={{JIRA_BASE_URL}}",
+        "--env", "JIRA_USERNAME={{JIRA_EMAIL}}",
+        "--env", "JIRA_API_TOKEN={{JIRA_API_TOKEN}}",
+        "--env", "CONFLUENCE_URL={{CONFLUENCE_BASE_URL}}",
+        "--env", "CONFLUENCE_USERNAME={{JIRA_EMAIL}}",
+        "--env", "CONFLUENCE_API_TOKEN={{JIRA_API_TOKEN}}",
+        "--env", "ENABLED_TOOLS=jira_get_issue,jira_search,confluence_get_page,confluence_search",
+        "--",
+        "uvx", "mcp-atlassian"
+      ]
+    },
+    "atlassian-oauth": {
+      "type": "http",
+      "url": "https://mcp.atlassian.com/v2/mcp"
     },
     "sonarqube": {
-      "command": "docker",
+      "command": "python3",
       "args": [
-        "run",
-        "--init",
-        "-i",
-        "--rm",
-        "-e",
-        "SONARQUBE_TOKEN",
-        "-e",
-        "SONARQUBE_ORG",
-        "-e",
-        "SONARQUBE_URL",
+        ".claude/tools/mcp-run.py",
+        "--env", "SONARQUBE_TOKEN={{SONAR_API_TOKEN}}",
+        "--env", "SONARQUBE_ORG={{SONAR_ORG|}}",
+        "--env", "SONARQUBE_URL={{SONAR_URL|https://sonarcloud.io}}",
+        "--",
+        "docker", "run", "--init", "-i", "--rm",
+        "-e", "SONARQUBE_TOKEN",
+        "-e", "SONARQUBE_ORG",
+        "-e", "SONARQUBE_URL",
         "mcp/sonarqube"
-      ],
-      "env": {
-        "SONARQUBE_TOKEN": "${SONAR_API_TOKEN}",
-        "SONARQUBE_ORG": "${SONAR_ORG}",
-        "SONARQUBE_URL": "${SONAR_URL:-https://sonarcloud.io}"
-      }
+      ]
+    },
+    "github": {
+      "command": "python3",
+      "args": [
+        ".claude/tools/mcp-run.py",
+        "--env", "GITHUB_PERSONAL_ACCESS_TOKEN={{GITHUB_TOKEN}}",
+        "--env", "GITHUB_HOST={{GITHUB_HOST|}}",
+        "--fallback", "GITHUB_TOKEN=gh auth token",
+        "--",
+        "docker", "run", "--init", "-i", "--rm",
+        "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "-e", "GITHUB_HOST",
+        "ghcr.io/github/github-mcp-server"
+      ]
+    },
+    "notion": {
+      "command": "python3",
+      "args": [
+        ".claude/tools/mcp-run.py",
+        "--env", "NOTION_TOKEN={{NOTION_TOKEN}}",
+        "--",
+        "npx", "-y", "@notionhq/notion-mcp-server"
+      ]
+    },
+    "notion-oauth": {
+      "type": "http",
+      "url": "https://mcp.notion.com/mcp"
     }
   }
 }

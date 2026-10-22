@@ -13,7 +13,7 @@ Create one or more Jira issues directly via the Jira Cloud REST API (v3), using 
 
 ## Do Not Use When
 
-- The user only wants to read or search existing issues — use `mcp__atlassian__jira_get_issue` / `mcp__atlassian__jira_search`, or the `get-jira-task` skill, instead.
+- The user only wants to read or search existing issues — use the Atlassian MCP (`mcp__atlassian__jira_get_issue` / `jira_search`, or the hosted server's `getJiraIssue` / `searchJiraIssuesUsingJql`), or the `get-jira-task` skill, instead.
 - You have not yet shown the user the exact list of summaries/descriptions you're about to create and gotten explicit go-ahead in the current conversation — creation is not easily reversible, so confirm before Step 2 unless the user has already reviewed and approved the list.
 
 ## Input
