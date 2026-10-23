@@ -16,6 +16,8 @@ USAGE (root = --root, else $CLAUDE_PROJECT_DIR, else cwd)
   workspace_docs.py status [--fetch]          per-repo staleness (HEAD date vs doc verified), missing/orphan docs;
                                               --fetch compares the upstream branch instead of the local checkout
   workspace_docs.py find <words...> [-n N]    rank chunks for a question (frontmatter weighted); prints path + summary
+  workspace_docs.py audit <backup.tgz>        no-content-loss check after align/refresh: backticked identifiers of
+                                              the backup that no longer appear anywhere in CLAUDE.md + docs/
   workspace_docs.py scaffold <kind> <name> [--summary S] [--keywords a,b] [--title T]
                                               kind: service|recipe|lookup|connection|topic; writes a stub chunk
                                               and registers it in its index (recipes/README.md, lookups.md)
@@ -221,6 +223,34 @@ def cmd_find(root, a):
     return 0
 
 
+# ---------------------------------------------------------------- audit
+def lib_texts(base):
+    paths = [base / "CLAUDE.md", *sorted((base / "docs").rglob("*.md"))] if (base / "docs").is_dir() else [base / "CLAUDE.md"]
+    return [p.read_text(errors="replace") for p in paths if p.is_file()]
+
+
+def cmd_audit(root, a):
+    """No-content-loss check: every `backticked` identifier of the backup must still appear in the library."""
+    import tarfile, tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        with tarfile.open(a.backup) as tf:
+            members = [m for m in tf.getmembers() if m.isfile() and not m.name.startswith(("/", "..")) and ".." not in m.name]
+            try:
+                tf.extractall(tmp, members=members, filter="data")
+            except TypeError:  # Python < 3.12 has no extraction filters
+                tf.extractall(tmp, members=members)
+        old = set()
+        for text in lib_texts(Path(tmp)):
+            old |= set(re.findall(r"`([^`\n]{3,80})`", text))
+    new = "\n".join(lib_texts(root))
+    norm = lambda s: re.sub(r"\\\|", "|", s)
+    lost = sorted(i for i in old if i not in new and norm(i) not in new and not re.search(r"[*§]|^[\s.,;:)]|[\s(,;:]$", i))
+    print(f"{len(old)} identifiers in backup; {len(lost)} not found in the current library")
+    for i in lost:
+        print("  missing:", i)
+    return 1 if lost else 0
+
+
 # ---------------------------------------------------------------- scaffold
 STUBS = {
     "service": ("docs/services/{name}.md", "# {name}\n\n**What it is:** {summary}. (family: <family>)\n**Top review risks:** <risks>\n**Related:** <`docs/services/x.md`>\n**Code:** `{root}/{name}/` · **Index:** `docs/services/README.md` · **Workspace map:** root `CLAUDE.md` §2-§3 · **Lookups:** `docs/lookups.md`\n\n---\n\n- **Stack:** <>\n- **CI/deploy:** <>\n- **Structure:** <>\n- **Data:** <>\n- **Auth:** <>\n- **Commands:** <>; single `<>`\n- **Review hotspots:** <>\n- **Drift:** <>\n"),
@@ -282,7 +312,15 @@ ROW_RE = re.compile(r"^\| \[(?P<title>[^\]]*)\]\((?P<url>[^)]*)\) \| (?P<why>.*?
 def read_links(path):
     if not path.is_file():
         return []
-    return [m.groupdict() for m in map(ROW_RE.match, path.read_text().splitlines()) if m]
+    rows = []
+    for line in path.read_text().splitlines():
+        if not line.startswith("| [") :
+            continue
+        m = ROW_RE.match(line)
+        if not m:  # never drop a row we cannot parse: the next write would lose it
+            raise SystemExit(f"unparsable row in {path.name}, fix it by hand first:\n{line}")
+        rows.append(m.groupdict())
+    return rows
 
 
 def write_links(root, rows):
@@ -327,7 +365,8 @@ def cmd_link(root, a):
         if a.pin and sum(r["pin"] == "yes" for r in rows) >= MAX_PINNED:
             print(f"already {MAX_PINNED} pinned links; unpin one first (keeps CLAUDE.md lean)"); return 2
         clean = lambda s: s.replace("|", "/").strip()
-        rows.append({"title": clean(a.title), "url": a.url, "why": clean(a.why),
+        title = clean(a.title).replace("[", "(").replace("]", ")")
+        rows.append({"title": title, "url": a.url.replace(")", "%29"), "why": clean(a.why),
                      "tags": clean(a.tags or ""), "pin": "yes" if a.pin else "no"})
     write_links(root, rows)
     print(f"{a.action}: {a.url} ({len(rows)} links, {sum(r['pin'] == 'yes' for r in rows)} pinned)")
@@ -342,13 +381,14 @@ def main():
     c = sub.add_parser("check"); c.add_argument("--json", action="store_true")
     st = sub.add_parser("status"); st.add_argument("--fetch", action="store_true", help="git fetch each repo and compare upstream HEAD")
     f = sub.add_parser("find"); f.add_argument("words", nargs="+"); f.add_argument("-n", type=int, default=5)
+    au = sub.add_parser("audit"); au.add_argument("backup", help="docs-backup-*.tgz made before align/refresh")
     s = sub.add_parser("scaffold"); s.add_argument("kind", choices=sorted(STUBS)); s.add_argument("name")
     s.add_argument("--summary"); s.add_argument("--keywords"); s.add_argument("--title")
     l = sub.add_parser("link"); l.add_argument("action", choices=["add", "remove", "list"]); l.add_argument("url", nargs="?")
     l.add_argument("--title"); l.add_argument("--why"); l.add_argument("--tags"); l.add_argument("--pin", action="store_true")
     a = p.parse_args()
     root = root_dir(a.root)
-    return {"inventory": cmd_inventory, "check": cmd_check, "status": cmd_status, "find": cmd_find,
+    return {"inventory": cmd_inventory, "check": cmd_check, "status": cmd_status, "find": cmd_find, "audit": cmd_audit,
             "scaffold": cmd_scaffold, "link": cmd_link}[a.cmd](root, a)
 
 

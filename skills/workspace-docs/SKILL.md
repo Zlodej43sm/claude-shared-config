@@ -13,7 +13,7 @@ chunk instead of whole repos or stale READMEs.
 - Layout, rules, align-mode mapping: `reference/layout.md` (next to this file).
 - File templates (service, lookup, connection, recipe, root CLAUDE.md): `reference/templates.md`.
 - Mechanical helper (stdlib Python): `.claude/tools/workspace_docs.py` — `inventory`, `check`,
-  `status`, `find`, `scaffold`, `link`. Run it as `python3 -I .claude/tools/workspace_docs.py <cmd>`
+  `status`, `find`, `audit`, `scaffold`, `link`. Run it as `python3 -I .claude/tools/workspace_docs.py <cmd>`
   from the workspace root (or pass `--root`). Below it is abbreviated `WSD`.
 
 Read both reference files before writing any chunk.
@@ -82,8 +82,11 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
    identifiers from its headings/tables, verified = the analysis date stated in it (else its mtime).
 5. **Root CLAUDE.md** from the skeleton in `reference/templates.md`; every repo name in backticks; keep
    the `<!-- pinned-links:start -->…end -->` block if present.
-6. **Validate:** `WSD check` until `OK`; spot-check 3 facts (one per family) in code; `WSD find` 3
+6. **Validate:** `WSD check` until `OK`; for `align`/`refresh` also `WSD audit <backup.tgz>` (every
+   backticked identifier of the old docs must still exist; restore real losses, list deliberate drops
+   such as old doc paths in the report); spot-check 3 facts (one per family) in code; `WSD find` 3
    realistic questions and confirm the right chunk ranks first (else improve its keywords).
+   `WSD link --pin` rewrites root CLAUDE.md: re-read it before editing it yourself.
 7. **Report:** command, chunks written/changed, largest chunk, CLAUDE.md size, repos added/removed/
    re-verified, content dropped (why), backup path, remaining FAILs.
 
