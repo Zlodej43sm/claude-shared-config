@@ -2,19 +2,24 @@
 # notion_fetch_page — fetch a Notion page (or verify the token) via the REST API
 #
 # SCHEMA_IN
-#   $1  Notion page URL or ID (32 hex chars, dashes optional) — or "--check"
-#   env NOTION_TOKEN   internal-integration secret; the page must be shared with the integration
+#   $1  Notion page or database URL/ID (32 hex chars, dashes optional; notion.so,
+#       app.notion.com/p/<ws>/..., *.notion.site, "?v=<view>" database views) — or "--check"
+#   env NOTION_TOKEN          internal-integration secret; the page must be shared with the integration
+#   env NOTION_WORKSPACE_ID   optional; --check reports whether the token's workspace matches it
 #
 # SCHEMA_OUT  stdout JSON
-#   page:    { "id": string, "title": string, "url": string, "markdown": string,
-#              "linked_pages": [ { "id": string, "url": string } ... ],
-#              "truncated": bool }
-#   --check: { "ok": true, "bot": string, "workspace": string|null }
+#   page:     { "kind": "page", "id", "title", "url", "markdown",
+#               "linked_pages": [ { "id", "url" } ... ], "truncated": bool }
+#   database: { "kind": "database", "id", "title", "url", "markdown",
+#               "rows": [ { "id", "title", "url" } ... ], "linked_pages": [], "truncated": bool }
+#   --check:  { "ok": true, "bot": string, "workspace": string|null,
+#               "workspace_id": string|null, "workspace_match": bool|null }
 #   Never prints the token. Read-only. Nested blocks are followed to depth 4 and
-#   at most 500 blocks per page (truncated=true when the cap is hit).
+#   at most 500 blocks per page (truncated=true when the cap is hit); databases list
+#   at most 50 rows.
 #
 # EXIT  0=ok  1=bad-args/missing-token  2=http-error (401 bad token, 404 not found
-#       or not shared with the integration, 429 rate limited)
+#       or not shared with the integration — or a different workspace, 429 rate limited)
 
 set -uo pipefail
 
@@ -36,30 +41,66 @@ def fail(code, msg):
     raise SystemExit(code)
 
 
-def get(path, retries=2):
-    req = urllib.request.Request(API + path, headers={
-        "Authorization": f"Bearer {TOKEN}",
-        "Notion-Version": "2022-06-28",
-    })
+HINTS = {
+    401: "token rejected - check NOTION_TOKEN",
+    404: "not found: the page is not shared with the integration (page menu > Connections), "
+         "or it lives in a different workspace than the token's (compare --check workspace_id)",
+    429: "rate limited",
+}
+
+
+class HttpError(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def request(path, method="GET", body=None, retries=2):
+    req = urllib.request.Request(
+        API + path,
+        data=None if body is None else json.dumps(body).encode(),
+        method=method,
+        headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "Notion-Version": "2022-06-28",
+            "Content-Type": "application/json",
+        },
+    )
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         if e.code == 429 and retries:
             time.sleep(int(e.headers.get("Retry-After", "1")))
-            return get(path, retries - 1)
-        hint = {401: "token rejected - check NOTION_TOKEN",
-                404: "not found, or the page is not shared with the integration (page menu > Connections)",
-                429: "rate limited"}.get(e.code, "")
-        fail(2, f"Notion HTTP {e.code} for {path.split('?')[0]} {hint}".strip())
+            return request(path, method, body, retries - 1)
+        raise HttpError(e.code)
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         fail(2, f"network error: {getattr(e, 'reason', e)}")
 
 
+def get(path, method="GET", body=None):
+    try:
+        return request(path, method, body)
+    except HttpError as e:
+        fail(2, f"Notion HTTP {e.code} for {path.split('?')[0]} {HINTS.get(e.code, '')}".strip())
+
+
+def norm_id(value):
+    return (value or "").replace("-", "").lower()
+
+
 if ARG == "--check":
     me = get("/users/me")
-    ws = (me.get("bot") or {}).get("workspace_name")
-    print(json.dumps({"ok": True, "bot": me.get("name") or me.get("id"), "workspace": ws}))
+    bot = me.get("bot") or {}
+    ws_id = bot.get("workspace_id")
+    expected = norm_id(os.environ.get("NOTION_WORKSPACE_ID", ""))
+    print(json.dumps({
+        "ok": True,
+        "bot": me.get("name") or me.get("id"),
+        "workspace": bot.get("workspace_name"),
+        "workspace_id": ws_id,
+        "workspace_match": (norm_id(ws_id) == expected) if (expected and ws_id) else None,
+    }))
     raise SystemExit(0)
 
 # A 32-hex run or a dashed UUID, not glued to other hex digits. Dashes must not be
@@ -99,7 +140,9 @@ def plain(rich):
 
 linked = {}
 state = {"blocks": 0, "truncated": False}
-NOTION_LINK = re.compile(r"https?://(?:www\.)?notion\.(?:so|site)/[^\s)>\]]+")
+NOTION_LINK = re.compile(
+    r"https?://(?:(?:www\.)?notion\.so|app\.notion\.com|[\w-]+\.notion\.site)/[^\s)>\]]+"
+)
 
 
 def note_links(text):
@@ -158,16 +201,52 @@ def render(block_id, depth):
         cursor = data["next_cursor"]
 
 
-page = get(f"/pages/{page_id}")
-title = ""
-for prop in page.get("properties", {}).values():
-    if prop.get("type") == "title":
-        title = plain(prop.get("title"))
+def title_of(properties):
+    for prop in (properties or {}).values():
+        if prop.get("type") == "title":
+            return plain(prop.get("title"))
+    return ""
+
+
+def print_database():
+    """A database or a saved view of one (the view id after ?v= is ignored: REST has no view API)."""
+    db = get(f"/databases/{page_id}")
+    title = plain(db.get("title"))
+    data = get(f"/databases/{page_id}/query", "POST", {"page_size": 50})
+    rows = [{"id": norm_id(r["id"]), "title": title_of(r.get("properties")), "url": r.get("url", "")}
+            for r in data.get("results", [])]
+    props = ", ".join(f"{name} ({p.get('type')})" for name, p in (db.get("properties") or {}).items())
+    md = "\n".join([f"Properties: {props}", ""] + [f"- [{r['title'] or r['id']}]({r['url']})" for r in rows])
+    print(json.dumps({
+        "kind": "database",
+        "id": page_id,
+        "title": title,
+        "url": db.get("url", ""),
+        "markdown": md,
+        "rows": rows,
+        "linked_pages": [],
+        "truncated": bool(data.get("has_more")),
+    }))
+    raise SystemExit(0)
+
+
+# "?v=<view>" marks a database view. Otherwise try a page first: the API answers 400
+# ("is a database") or 404 when the id is a database, so fall back to /databases.
+if re.search(r"[?&]v=", ARG):
+    print_database()
+try:
+    page = request(f"/pages/{page_id}")
+except HttpError as e:
+    if e.code not in (400, 404):
+        fail(2, f"Notion HTTP {e.code} for /pages/{page_id} {HINTS.get(e.code, '')}".strip())
+    print_database()
+
 lines = render(page_id, 0)
 md = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 print(json.dumps({
+    "kind": "page",
     "id": page_id,
-    "title": title,
+    "title": title_of(page.get("properties")),
     "url": page.get("url", ""),
     "markdown": md,
     "linked_pages": [{"id": i, "url": u} for i, u in linked.items()],

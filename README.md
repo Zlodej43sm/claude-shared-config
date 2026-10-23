@@ -134,6 +134,7 @@ server), then:
 | `github` fails: `GITHUB_TOKEN is not set` | No token in `.env` and no `gh` session: run `gh auth login` (or set `GITHUB_TOKEN`), restart |
 | `notion-oauth` says "needs authentication" | Expected until you sign in: `/mcp` → `notion-oauth` → Authenticate (browser window) |
 | Neither Notion server listed | `NOTION_MCP=off` is set in `.claude/.env` |
+| Notion 404 for a page you can open in the browser, even after re-authenticating | `notion-oauth` is signed into another workspace (a personal one can have the same name). `/get-notion-page --check` prints the workspace id; `/mcp` → `notion-oauth` → Authenticate and pick the right workspace in the consent screen's switcher; then set `NOTION_WORKSPACE_ID` in `.claude/.env` |
 | `github` fails on first start | The Docker image is being pulled — wait and restart. Docker must be running |
 | Server not found / `.mcp.json` has no `github` | The project's `.mcp.json` is an old copy; delete it and re-run `bin/link-project.sh <project>` |
 | 401 / 403 / 404 from a PR skill | Run `/connect-git`; it names the failing layer (token, scope, or owner/repo / workspace/slug) |
