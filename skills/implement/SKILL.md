@@ -106,8 +106,8 @@ Read the plan file. Find the **QA commands** table in the plan — it contains t
 
 For each `- [ ]` task in the **Step-by-step tasks** section, execute it in order:
 
-1. Create or modify the file(s) named in the task using Edit/Write tools.
-2. After each file is written, run the type-checker command from the QA table, then the lint command. Fix any errors before moving to the next task.
+1. Create or modify the file(s) named in the task using Edit/Write tools. Write self-descriptive code with **no comments** (no inline, block or doc comments): carry the "why" in names of functions, variables, constants and types, and in small extracted functions. If a comment seems necessary, rename or extract instead. Lint-suppression directives are a last resort; prefer code the linter accepts. Do not touch files outside the task's scope.
+2. After each file is written, run the type-checker command from the QA table, then the lint command. Fix any errors before moving to the next task. If the file is a migration, also re-check it item by item against the project's DB checklist (the plan's **DB checklist** table, a project-local DB skill in `.claude/skills/`, or the checklist the project `CLAUDE.md` / workspace-root `CLAUDE.md` points to); a failed blocker item stops the task until fixed.
 3. After all source tasks are done, run the test command from the QA table.
 4. Fix failing tests before declaring done. If a build command is listed (not "n/a"), run it last.
 5. Mark each task `- [x]` in the plan file as it completes (update the file with Edit).

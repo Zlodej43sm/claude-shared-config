@@ -257,7 +257,7 @@ Use it directly — do NOT re-fetch these Jira tickets or Confluence pages.
 
 <PREFETCHED_CONTEXT>
 
-Because the Jira ticket and Confluence pages are already above, skip the Jira-fetch and Confluence-fetch portions of your Step 1 and the entirety of your Step 1b. Build your AC checklist and logic spec directly from the PREFETCHED_CONTEXT block. Then run Steps 2 through 4 as normal and return the structured review as your final message.
+Because the Jira ticket and Confluence pages are already above, skip the Jira-fetch and Confluence-fetch portions of your Step 1 and the entirety of your Step 1b. Build your AC checklist and logic spec directly from the PREFETCHED_CONTEXT block. Then run Steps 2 through 4 as normal and return the structured review as your final message. If the diff touches migrations or other DDL, apply the project's DB checklist item by item (found in Step 0b: repo or workspace-root CLAUDE.md, or a project-local skill) and include the `## DB checklist` table.
 ```
 
 **Local-mode prompt template:**

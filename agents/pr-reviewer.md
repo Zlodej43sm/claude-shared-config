@@ -45,6 +45,7 @@ Read `CLAUDE.md` **first** (before any API calls). Extract:
 - Layer contracts (e.g. import-linter rules, package boundaries).
 - CI steps from `bitbucket-pipelines.yml` (Bitbucket) or the relevant workflow file under `.github/workflows/` (GitHub) — do not invent steps that aren't there.
 - Any cross-service contracts called out explicitly (Kafka topics, S3 paths, Avro schemas, shared libraries).
+- Review checklists and convention docs for a kind of change, e.g. a DB migration checklist or schema conventions. Look in the repo's `CLAUDE.md`, in the workspace-root `CLAUDE.md` above it if one exists (multi-repo workspaces keep shared rules there), and in project-local skills under `.claude/skills/` whose description covers that change (you cannot invoke skills: read their `SKILL.md`). Record each source's path and which changed files trigger it; read the docs it links before Step 3.
 
 Apply these facts to every review rule below. When a rule references a language-specific idiom (e.g. ESM `.js` imports, `pnpm-lock.yaml`) that doesn't match the project, skip it silently. Add equivalent rules for the actual stack instead.
 
@@ -148,6 +149,7 @@ Each file from the diffstat (or local file list) lands in **one or more** bucket
 |--------|-----------------|
 | `backend` | `src/**` (non-test), `app/**` (non-test) |
 | `schemas` | `**/*.avsc`, `**/*.proto`, `**/*.json` (schema files), `**/schemas/**` |
+| `migrations` | `migrations/**`, `**/migrations/**`, `db/migrate/**`, `**/*.sql`, `**/schema.prisma` |
 | `tests` | `**/test_*.py`, `**/*_test.py`, `tests/**`, `**/test/**`, `**/*.test.ts`, `**/*.spec.*` |
 | `devops` | `docker/**`, `Dockerfile*`, `docker-compose*.yml`, `**/pipelines.yml`, `pyproject.toml`, `package.json`, `*.lock`, `*.cfg`, `.env.example` |
 | `docs` | `**/*.md`, `docs/**` |
@@ -169,12 +171,28 @@ Apply **all** of the rules below. Every finding gets a severity: `blocking` · `
 - Broken signal handling — entry points typically handle SIGTERM/SIGINT; flag changes that break that contract.
 - Missing `.js` suffix on local imports in ESM+NodeNext packages (skip if project is not Node ESM).
 
+### Self-descriptive code
+
+- Code comments added by the PR (inline, block, JSDoc, explanatory comments above lint-suppression directives) are a **suggestion** finding: propose the rename or extraction that makes the comment unnecessary (e.g. a named boolean, a function named after its intent, a constant).
+- Changes to files unrelated to the PR's scope (formatting, log keys, refactors) are a **suggestion** finding: ask to revert them.
+
 ### Schema & contract integrity
 
 - New event/DTO shapes must land in the canonical schema location (from CLAUDE.md); flag shapes defined inline in the wrong layer.
 - Any constant or limit that is a **cross-layer invariant** (e.g. batch size, schema version, buffer limit): changing it on one side without the other is **blocking**.
 - Env contract: if config/settings module changes, `.env.example` must be updated too. Flag mismatch as **blocking**.
 - Public API changes to a shared library consumed by other services, without a corresponding version bump, are **blocking**.
+
+### Database migrations (trigger when the `migrations` bucket is non-empty)
+
+- If Step 0b found a DB checklist, apply it **item by item** and report every item in the `## DB checklist` table (pass / fail / n/a, with `file:line` evidence). A failed blocker item is a **blocking** finding; never skip an item silently.
+- Compare the DDL with the newest migration that follows the project's template, not with the table it sits next to. DDL copied from a legacy table (old PK style, timestamp types, defaults) is a finding.
+- Check even without a checklist:
+  - `down` reverses `up`, in reverse order.
+  - Every FK column is indexed.
+  - Tests and fixtures of code that selects all columns from an altered table expect the new column.
+  - Lock impact: an FK or a non-concurrent index on a large table blocks writes; the PR states the table's size, or the finding asks for it.
+- Existing reviewer comments on the migration are evidence: if a checklist item matches one, cite the comment in the table.
 
 ### Avro-specific (trigger when `schemas` bucket is non-empty and avsc files are present)
 
@@ -393,6 +411,16 @@ Note if the ticket prefix matches the change type (feature, DevOps, fix, etc.).
 **C3** — `schemas/avsc/Envelope.avsc:15` — 🔴 blocking
 
 <finding>
+
+---
+
+## DB checklist                  ← omit entirely if the `migrations` bucket is empty
+
+Source: `<path of the project's DB checklist, or "none found: generic checks only">`
+
+| Item | Tag | Result | Evidence |
+|------|-----|--------|----------|
+| <checklist item> | <blocker/should/process> | pass / **fail** / n/a | `migrations/<file>:<line>`, reviewer comment id |
 
 ---
 

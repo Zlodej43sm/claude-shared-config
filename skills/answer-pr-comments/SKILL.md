@@ -103,7 +103,7 @@ git status --porcelain             # uncommitted changes: tell the user before e
 git fetch -q origin && git rev-list --left-right --count HEAD...origin/<source-branch>   # behind > 0: stop and say so
 ```
 
-Read the project `CLAUDE.md` / contributing docs for the checks to run (typecheck, lint, format, tests) and any coding standards. Note the PR's destination branch and whether sibling repositories are checked out next to this one (read-only references, see F2).
+Read the project `CLAUDE.md` / contributing docs for the checks to run (typecheck, lint, format, tests) and any coding standards, including any review checklist it or the workspace-root `CLAUDE.md` points to, or a project-local skill in `.claude/skills/` covers (e.g. a DB migration checklist). A fix that touches a migration is re-checked against that checklist item by item, not only against the comment that asked for it. Note the PR's destination branch and whether sibling repositories are checked out next to this one (read-only references, see F2).
 
 ### F1 — Collect
 
@@ -136,6 +136,7 @@ Write the triage as a table (id, file, verdict, one-line reason) and keep it for
 ### F3 — Fix
 
 - Edit only what the comments require. Mention any extra change that was needed to make a fix correct.
+- Fixes add no code comments: make the code self-descriptive (names, extracted functions) instead. When a reviewer asks to remove a comment, move its meaning into a name rather than just deleting it.
 - A behaviour change gets a test. When feasible show it is real: temporarily undo the fix and confirm the test fails, then restore.
 - A refactor (splitting a file, grouping parameters) must preserve behaviour: run the tests before and after.
 - If fixing one comment invalidates the wording of docs, README, OpenAPI text or tests elsewhere, update them in the same change.

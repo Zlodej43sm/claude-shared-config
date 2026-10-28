@@ -44,6 +44,7 @@ Focus on:
 - Existing patterns for the same kind of work (e.g. if adding a new reader, find existing readers).
 - Test patterns — existing test fixtures, setup files, mock patterns (derive filename conventions from CLAUDE.md and the existing test tree).
 - Schema files if the ticket involves schema changes (Avro, Proto, JSON Schema, Zod, etc.).
+- **Database migrations** if the ticket adds or changes a table, column or index. First read the project's DB rules: a project-local skill in `.claude/skills/` whose description covers migrations (read its `SKILL.md`), and any migration checklist, conventions doc or template that the repo's `CLAUDE.md` or the workspace-root `CLAUDE.md` above it points to. Model the SQL on the newest migration that follows those rules, **not** on the legacy table the new one sits next to.
 - The project's config/settings module if new env vars are needed.
 - `.env.example` for the same reason.
 
@@ -127,6 +128,7 @@ Be specific: name the actual layer directories from CLAUDE.md, not generic names
 ### Existing patterns to follow
 - `<path/to/existing/similar/file>` — <why it's the relevant pattern>
 - ...
+- Code style: self-descriptive names, no comments in the code; files outside the ticket's scope are not touched.
 
 ### Key decisions
 **Decision 1: <title>**
@@ -141,6 +143,13 @@ Reason: <why, referencing spec or CLAUDE.md constraints>
 - 🔴 <high risk>: <description and mitigation>
 - 🟡 <medium risk>: <description>
 - ⚪ <low risk>: <description>
+
+### DB checklist  ← omit if the plan has no migration or DDL
+Source: <path of the project's DB checklist / conventions doc, or "none found: generic checks only">
+
+| Item | Tag | How the planned SQL meets it |
+|------|-----|------------------------------|
+| <every checklist item, in order> | <blocker/should/process> | <column, constraint or step that satisfies it, or n/a with reason> |
 
 ---
 
