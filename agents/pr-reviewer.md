@@ -72,6 +72,7 @@ Send **one message** with all these Bash calls in parallel (skip _PR mode only_ 
    - `host=bitbucket` (PR): `GET ${base_url}/diff`
    - `host=github` (PR): `GET ${base_url}` with header `Accept: application/vnd.github.v3.diff` (same URL as item 1, content-negotiated to return the raw unified diff instead of JSON)
    - local mode (either host): `git diff "$destination...HEAD"`
+   - In PR mode, also save the full raw diff to a private temp file (`DIFF_FILE=$(mktemp)`, `curl … -o "$DIFF_FILE"`): Step 4 builds the finding links from it. Check it holds every changed file (`grep -c '^diff --git'` against the diffstat count); a shell wrapper that filters output can truncate it.
 3. **Diffstat** _(PR mode)_ → always fetch. **Use this to classify files, not local `git diff`**, because local diff may include carry-over commits.
    - `host=bitbucket`: `GET ${base_url}/diffstat?pagelen=500`
    - `host=github`: `GET ${base_url}/files?per_page=100`; if the response has exactly 100 entries, paginate with `&page=2`, `&page=3`, … until a page returns fewer than 100
@@ -336,6 +337,22 @@ Every finding that references a specific file **must** include a `:LINE` in the 
 
 If you genuinely cannot identify a specific line (e.g. a high-level architectural concern with no single home), use line 1 of the most relevant file in the diff as a minimum anchor. Reserve true general comments (no file path) only for findings that span the entire PR and cannot be pinned to any single file.
 
+**Prefer a line the PR changed.** A reader opens the finding in the PR's diff view, and GitHub only accepts inline comments on lines inside a diff hunk. When the file to fix is not changed by the PR (e.g. a missing dependency in an untouched `package.json`), anchor the finding on the changed line that causes it (the new import, the new call) and name the file to fix in the body.
+
+### Finding links (PR mode, strictly enforced)
+
+Every finding with a file anchor gets a link line right under its header that opens **the PR's diff view at that line**, not the file in the repo. Build all links in one call from the saved diff, never by hand:
+
+```bash
+.claude/tools/pr_line_links.py --host=<host> --owner=<workspace|owner> --repo=<repo> \
+  --pr=<pr_id> --commit=<source_commit> path/a.ts:42 path/b.ts:10-14 … < "$DIFF_FILE"
+```
+
+- `in_hunk: true` → write `PR line: <link>` (GitHub: `…/pull/<id>/changes#diff-<sha256(path)>R<line>`).
+- `in_hunk: false` → move the anchor to a changed line (rule above) and rerun. If no changed line fits, write `PR file: <pr_link>` when `in_diff` is true, and add `At head commit: <blob_link>`.
+- A second location (the same pattern elsewhere, the file to fix outside the PR) gets its own line: `Same pattern: <link>` / `To fix (not in the PR): <blob_link>`.
+- On GitHub Enterprise pass `--web-base=<web host>`. In local mode there is no PR: omit the link lines.
+
 ### Finding body writing style
 
 Finding bodies are posted verbatim as PR comments (Bitbucket or GitHub) and will be read by the author as peer feedback. Write them in direct, expert voice:
@@ -395,6 +412,7 @@ Note if the ticket prefix matches the change type (feature, DevOps, fix, etc.).
 ## Backend
 
 **C1** — `src/module/file.py:42` — 🔴 blocking
+PR line: <link from pr_line_links.py, e.g. https://github.com/<owner>/<repo>/pull/<id>/changes#diff-<sha256(path)>R42>
 
 <one-paragraph finding: what is wrong, why it breaks, how to fix>
 

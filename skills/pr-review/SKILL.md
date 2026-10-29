@@ -37,6 +37,7 @@ This skill supports two git-hosting backends, **Bitbucket** and **GitHub**. `det
 | `extract_pr_links.py`                                                                                          | stdin: PR text → stdout JSON `{jira_keys, conf_page_ids, external_repos}` + writes `$PR_REVIEW_CACHE_DIR/link_registry.json` (requires `PR_REVIEW_CACHE_DIR` env)                                     |
 | `extract_secondary_links.py [--fetched-keys=…] [--fetched-pages=…]`                                            | Reads `$PR_REVIEW_CACHE_DIR/jira_*.json` + `$PR_REVIEW_CACHE_DIR/conf_*.json` → stdout JSON `{new_jira_keys, new_conf_page_ids}` + updates `$PR_REVIEW_CACHE_DIR/link_registry.json`                  |
 | `build_prefetch_context.py --pr-id=N --title=T --source-branch=B --dest-branch=B --source-commit=H --author=A` | Reads all `$PR_REVIEW_CACHE_DIR/jira_*.json` + `$PR_REVIEW_CACHE_DIR/conf_*.json` + `$PR_REVIEW_CACHE_DIR/link_registry.json` → stdout PREFETCHED_CONTEXT block                                       |
+| `pr_line_links.py --host=H --owner=O --repo=R --pr=N --commit=H path:LINE …` (diff on stdin)                   | Used by the `pr-reviewer` subagent: turns each finding's `path:LINE` into a link to the PR's diff view at that line → stdout JSON `[{anchor, in_diff, in_hunk, link, pr_link, blob_link}]`             |
 
 ---
 
@@ -275,6 +276,8 @@ There is no open PR for this branch. Run your standing review procedure in local
 
 Surface the subagent's returned message **verbatim**. Do not paraphrase, summarize, or wrap it.
 
+In PR mode every finding with a file anchor must carry a `PR line:` (or `PR file:`) link to the PR's diff view, built by `pr_line_links.py`. If findings come back without them, or with links to the file in the repo (`/blob/…`) instead of the PR, send the subagent back (SendMessage) to add them before you surface the review.
+
 After surfacing the review, write it to a markdown file:
 
 - PR mode: `.claude/reviews/pr-<PR_ID>.md`
@@ -302,7 +305,7 @@ From `.claude/reviews/pr-<PR_ID>.md`, extract every `Cx` finding header and body
 - **File-only candidates** — header has `` `path/to/file.py` `` with no `:LINE`.
 - **True general candidates** — header has no file path.
 
-**Comment body transformation:** Header `**Cx** — \`path:line\` — severity`→ opening line`**Cx — emoji severity**` (drop the path:line, keep badge + severity). Follow with the substantive paragraph(s). Strip any meta-framing.
+**Comment body transformation:** Header `**Cx** — \`path:line\` — severity`→ opening line`**Cx — emoji severity**` (drop the path:line, keep badge + severity). Drop the `PR line:` / `PR file:` link line too, since the comment already sits on that line; keep `Same pattern:` and `To fix (not in the PR):` links. Follow with the substantive paragraph(s). Strip any meta-framing.
 
 ### 3b.5 — Gate: fetch the PR diffstat
 
