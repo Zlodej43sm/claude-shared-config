@@ -45,6 +45,7 @@ Read `CLAUDE.md` **first** (before any API calls). Extract:
 - Layer contracts (e.g. import-linter rules, package boundaries).
 - CI steps from `bitbucket-pipelines.yml` (Bitbucket) or the relevant workflow file under `.github/workflows/` (GitHub) — do not invent steps that aren't there.
 - Any cross-service contracts called out explicitly (Kafka topics, S3 paths, Avro schemas, shared libraries).
+- Test changes in any language: if `.claude/skills/test-design/SKILL.md` exists, read it and flag duplicate, implied, library-guarantee and wrong-level tests as should-fix, naming the test that already covers each.
 - Backend code standards: if `.claude/skills/backend-review/SKILL.md` exists (shared skill), read it and the `backend-implementation` skill it points to, then the project's coding-standards and style docs it names; apply its Step 2 checks (layering, contracts, tests, naming/style) and its severity levels to every backend file.
 - Review checklists and convention docs for a kind of change, e.g. a DB migration checklist or schema conventions. Look in the repo's `CLAUDE.md`, in the workspace-root `CLAUDE.md` above it if one exists (multi-repo workspaces keep shared rules there), and in project-local skills under `.claude/skills/` whose description covers that change (you cannot invoke skills: read their `SKILL.md`). Record each source's path and which changed files trigger it; read the docs it links before Step 3.
 
