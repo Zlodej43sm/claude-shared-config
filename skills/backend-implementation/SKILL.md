@@ -19,32 +19,34 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 
 - Respect the project's component types (what each may call, own and publish). Never put domain rules in a component that doesn't own the domain; one component wraps each third-party API.
 - Inside a component: **handler** (thin: validate, call one model, map errors) → **model** (business logic) → **provider/repository** (data access) or **client** (outbound calls). A handler never queries; a provider never decides.
-- **Provider / repository:** one query against one resource. Plain verbs over full rows: `get<Entity>(filters)`, `get<Entities>(filters)`, `insert<Entity>`, `update<Entity>`, `delete<Entity>`; name a conditional write after its condition (`upsert<Entities>IfNewer`). Not in a provider: `getOrCreate`, single-column getters, `if`/`throw` on results, de-duplication, maps, a second query, calls to other providers, caching. Parameterised queries only.
-- **Concurrency exception:** a condition that must hold at write time stays in the SQL statement (`ON CONFLICT … DO UPDATE … WHERE stored < incoming`, insert-or-return-existing). The model must not replace it with read-then-write.
-- **Model:** skip empty input, de-duplicate, choose insert vs update, resolve links, check existence, throw domain errors, orchestrate providers/clients, map records to API types. Inline single-use logic; a local helper only when its name states a concept.
+- **Provider / repository:** one query against one resource. Plain verbs over full rows: `get<Entity>(filters)`, `get<Entities>(filters)`, `insert<Entity>`, `update<Entity>`, `delete<Entity>`; name a write that may skip rows after its condition (`upsert<Entities>IfNewer`); an insert-or-return-existing keeps the plain `insert<Entity>`. Not in a provider: `getOrCreate`, single-column getters, `if`/`throw` on results, de-duplication, maps, a second query, calls to other providers, caching. Parameterised queries only.
+- **Concurrency exception:** a condition that must hold at write time stays in the SQL statement (`ON CONFLICT … DO UPDATE … WHERE stored <= incoming`, insert-or-return-existing). The model must not replace it with read-then-write.
+- **Full-entity upsert = one statement:** when the request carries the whole entity, the provider runs one `INSERT … ON CONFLICT (<key>) DO UPDATE` (`upsert<Entity>`); the model never reads the row to choose insert vs update — that races under parallel calls and a lagging replica.
+- **Model:** skip empty input, de-duplicate, resolve links, check existence, throw domain errors, orchestrate providers/clients, map records to API types. One function, one job: a function's name states everything it does (a de-duplicator doesn't also normalise). Inline single-use logic; a local helper only when its name states a concept.
 - Pre-push check: any provider with an `if`, a `throw`, a map or a second query? Move that part to the model.
 
 ## 2. Types and contracts
 - Storage record types describe columns; API contract types describe requests/responses. Keep them independent: never alias or derive one from the other. Providers take/return records; models map to API types.
 - Type provider inputs inline from the record (`Pick<…>`, `Partial<…> & Pick<…, 'key'>`); don't export one-off input aliases.
-- Contract changes go into the project's shared types package and are regenerated/published per its docs. Prefer `type` aliases and `as const` dictionaries over interfaces and enums unless the project says otherwise.
+- Contract changes go into the project's shared types package and are regenerated/published per its docs. Prefer `type` aliases and `as const` dictionaries over interfaces and enums unless the project says otherwise. A module used only for types is imported with `import type`.
 
 ## 3. Entities, upserts, batches
 - A concept with its own lifecycle is its own entity (type, table, methods), linked by id.
 - Upserts replace the whole entity (PUT): non-partial request schema, required fields enforced by the schema, a missing optional link clears it. Callers never send internal ids: omit the internal key, accept the external one, resolve it in the model.
 - Parent may arrive after child: the model reads the parent and, if missing, inserts a placeholder with only the external id; the parent's own upsert fills it.
-- Batch methods only when callers send several items: array input, plural name, one statement, keys de-duplicated in the model first (same key twice: newest version wins, ties go to the later item). Empty input returns an empty result without touching the database. Otherwise single-item functions.
+- Batch methods only when callers send several items: array input, plural name, one statement, keys de-duplicated in the model first (same key twice: newest version wins, ties go to the later item). The same tie rule holds in SQL against stored rows (`<=`): later notification wins everywhere, and a redelivery just rewrites the same values. Empty input returns an empty result without touching the database. The response holds the rows actually written; skipped (stale) items are not echoed. Otherwise single-item functions.
 - Request schemas omit internal ids and database-managed columns (`updatedTs`, generated uuids); timestamps the caller owns (the source system's created/updated time) stay in the request. An optional link is `.nullish()`, so `null` and absence both clear it.
+- When you delete a model check, move its rule into the schema (e.g. a removed `!amount` guard becomes `.positive()`) or state in the PR why it is gone.
 - Making a schema stricter (partial → full replace, optional → required) is a contract change: check that every caller already sends the fields, and say so in the PR with the release order.
 
 ## 4. Validation
-- Validate every input at the boundary with the project's schema library, internal callers included. Build request schemas from the entity schema (omit/partial, then extend). Invalid input fails in the schema, not in the model.
+- Validate every input at the boundary with the project's schema library, internal callers included. The schema checks shape; normalising values (trim, drop empty, de-duplicate) is a model decision. Build request schemas from the entity schema (omit/partial, then extend). Invalid input fails in the schema, not in the model.
 - Map input to explicit fields; never spread raw input into records or queries. Cap sizes on public endpoints.
 
 ## 5. Errors and logging
 - Throw only the project's base error class or its subclasses, with a code and a functional/technical classification; never bare errors or strings. One class per failure mode.
 - Re-throw a caught error as is only if it is already a project error; otherwise wrap it, keeping the original as `cause`. Static messages; variable data in structured info.
-- Use the project's logger, never `console.log`. Don't log the same failure twice (if the framework logs thrown errors, throw with context instead). Structured fields with the error under the project's key; no whole objects, secrets, tokens or personal data. Levels: debug, info, warn (monitored), error (must be fixed).
+- Use the project's logger, never `console.log`. Log a failure once: either throw with context and let the framework log it, or log once in the model and throw the wrapped error (follow the project's pattern); never log it again in another layer. Structured fields with the error under the project's key; no whole objects, secrets, tokens or personal data. Levels: debug, info, warn (monitored), error (must be fixed).
 
 ## 6. Config, cache, security, dependencies
 - Config through the project's config system; secrets only in its secret store, never in code, config files or logs. Constants in a `constants` module; no magic values.
@@ -54,21 +56,25 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 
 ## 7. Readability
 - Names carry the meaning: intent-named functions, named booleans, variables naming the situation, response fields naming what they hold.
-- No comment restating the code; a one-line comment only for a non-obvious "why". Fix root causes; `async/await`, not promise chains; no lint suppression without reason.
+- No comments for intent or business reasons (they go in the PR description) and none that restate the code or the function name. A one-line comment only for a non-obvious technical behaviour of a database or library (e.g. why a no-op update is used). Fix root causes; `async/await`, not promise chains; no lint suppression without reason.
 
 ## 8. Tests
 - **Unit:** every function with business logic, every path. Mock every dependency (spy on the module first, full module mocks last); assert calls with arguments and the return value; don't re-test callees. Providers and pure forwarding functions get no unit test. Parameterise instead of copying tests.
 - **Functional:** cover methods and queries end to end against a real test database (never mocked); mock every outbound HTTP call. A scenario per functional change and per bug fix; reuse the project's shared steps.
-- Plain schema validation (type, required, enum, format) needs no functional scenario; rules the schema's types can't express do. If written, name it `Should reject <what is wrong>`.
+- **Don't test the schema library:** no functional scenario for plain schema validation (type, integer, required, enum, format, "full replace needs every field"). Only rules the schema's types can't express (mutual exclusion, cross-field refinements) get a failure scenario.
+- **Every failure scenario asserts why it failed:** the error message and code (or the error data listing the invalid fields), not just "failed"; skip unrelated side-effect checks after a failure.
+- **No duplicate coverage:** before adding a scenario, list what each existing one proves; drop one that a combination of others already covers (link new + move existing ⇒ link existing).
+- **Right level:** logic that runs entirely in the model before any query (de-duplication, normalisation, sorting) is proven by unit tests; functional fixtures use clean, already-normalised data so each scenario tests one thing.
 - Names follow §10.
 
 ## 10. Naming and style (reviewer-preferred forms; the project's style doc gives concrete examples)
-- **Feature/functional scenarios:** `Feature: <Verb> <domain object>`; `Scenario: Should <verb> <object> [when <condition>]` in domain words, with the condition spelled out (`Should update an existing <entity> when the update timestamp is newer than the stored one`, `Should ignore an update when …older…`, `Should link a new <child> to an existing <parent>`). Invalid input: `Should reject <what is wrong>`. No vague titles, no implementation words (table, column, SQL).
-- **Unit tests:** `describe('<functionName>')`; `it('should <outcome> [when|without <condition>]')`, lower-case `should` (`should return no <entities> without querying the database for an empty list`, `should wrap a provider error`). Variants with `it.each(<namedList>)`.
+- **Feature/functional scenarios:** `Feature: <Verb> <domain object>`; `Scenario: Should <verb> <object> [when <condition>]` in domain words, with the condition spelled out as the caller sees it (`Should update an existing <entity> when the update timestamp is newer than the stored one`, `Should unlink an existing <child> when the payload does not contain the <parent> ID`, `Should change the linked <parent> of a <child> when the upsert sends a different <parent> ID`, `Should create a placeholder <parent> and link the <child> to it when the actual <parent> does not exist yet`, `Should complete the information of a partially stored <entity>`). Compare with "the stored one", not "the existing one". Name the fields the scenario asserts (`Should return the <field> when …`), not "info" or "data". Custom-rule failures: `Should reject <what is wrong>`. No vague titles, no implementation words (table, column, SQL).
+- **Unit tests:** `describe('<functionName>')`; `it('should <outcome> [when|without <condition>]')`, lower-case `should`, naming the exact outcome and the collaborator: `should return no <entities> without querying the database for an empty list`, `should throw <ErrorClass> '<message>' when <collaborator> throws`, `should throw <ErrorClass> and not call <next collaborator> when <collaborator> throws`. No vague verbs (fail, wrap, handle, work). Variants with `it.each(<namedList>)`.
 - **Method definitions:** description = one sentence, verb first, what + guarantee (`Upsert <entities>, ensuring older notifications don't overwrite newer data.`). Success response description = `Returns the <past-participle> <entities>`.
 - **Response fields** are named after the operation: `upserted<Entities>`, `created<Entity>`, `deleted<Entities>` — not a bare `<entities>` or a synonym the API doesn't use.
-- **Schemas and types:** `<entity>Schema` + `type <Entity>`; `<method>RequestSchema` / `<method>ResponseSchema` + `<Method>Request` / `<Method>Response`; batch items `<method>InputSchema` / `<Method>Input`. A field that references another entity reuses that entity's field schema (`<entity>Schema.shape.<key>.nullish()`), never a redeclared primitive.
-- **Model / provider names:** find-or-create of a link in a model is `resolve<Entity><Key>`; providers use `get` / `insert` / `update` / `upsert<Entities>If<Condition>`. Entity name constants and error wrappers follow the project's existing pattern.
+- **Schemas and types:** `<entity>Schema` + `type <Entity>`; `<method>RequestSchema` / `<method>ResponseSchema` + `<Method>Request` / `<Method>Response`; batch items `<method>InputSchema` / `<Method>Input`. A field that belongs to another entity — its uuid or its external id in a request — reuses that entity's field schema (`<entity>Schema.shape.<key>.nullish()`), never a redeclared primitive, so the two stay in sync.
+- **Model / provider / handler names:** handlers follow the newest sibling's form; find-or-create of a link in a model is `resolve<Entity><Key>`; providers use `get` / `insert` / `update` / `upsert<Entities>If<Condition>`. Entity name constants and error wrappers follow the project's existing pattern.
+- **Files:** model functions in `models/<domain>/`; pure helpers (no I/O, e.g. normalising values) in `models/<domain>/helpers/` with tests in `helpers/__tests__/`.
 - **Consistency over invention:** before choosing an edge-case behaviour (empty batch, not found, duplicates), check how sibling methods behave and align (e.g. an empty batch returns an empty array, not an error). Reviewers ask "what do the other methods do?".
 
 ## 9. Scope and PRs
