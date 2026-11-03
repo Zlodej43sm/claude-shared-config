@@ -13,7 +13,9 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 2. Order of authority: repo `CLAUDE.md` → project coding-standards docs → this skill. When a project doc is stricter or names a concrete tool, error class or naming scheme, use it.
 3. No project standards found: apply the defaults below and say so in your plan or review.
 4. When unsure how something should look, copy the newest repo or module of the same kind in the project, not the older code next to your change.
-5. Review lessons: a generic lesson goes here; a project-specific one goes into the project's docs.
+5. Review lessons: a generic lesson goes here (and into `references/review-checklist.md`); a project-specific one goes into the project's docs.
+6. Before opening a PR and after every push, run `references/review-checklist.md` (grouped like reviewers' feedback: architecture, contracts, data, tests, naming, organisation, errors, process).
+7. When reviewers disagree, follow the more specific or newest convention and say in both threads what you did and why.
 
 ## 1. Components and layering
 
@@ -23,6 +25,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - **Concurrency exception:** a condition that must hold at write time stays in the SQL statement (`ON CONFLICT … DO UPDATE … WHERE stored <= incoming`, insert-or-return-existing). The model must not replace it with read-then-write.
 - **Full-entity upsert = one statement:** when the request carries the whole entity, the provider runs one `INSERT … ON CONFLICT (<key>) DO UPDATE` (`upsert<Entity>`); the model never reads the row to choose insert vs update — that races under parallel calls and a lagging replica.
 - **Model:** skip empty input, de-duplicate, resolve links, check existence, throw domain errors, orchestrate providers/clients, map records to API types. One function, one job: a function's name states everything it does (a de-duplicator doesn't also normalise). Inline single-use logic; a local helper only when its name states a concept.
+- **Read/write split:** when reads go to replicas by default, a read that decides a write, or follows a write in the same request, uses the primary (or the decision moves into one SQL statement).
 - Pre-push check: any provider with an `if`, a `throw`, a map or a second query? Move that part to the model.
 
 ## 2. Types and contracts
@@ -34,6 +37,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - A concept with its own lifecycle is its own entity (type, table, methods), linked by id.
 - Upserts replace the whole entity (PUT): non-partial request schema, required fields enforced by the schema, a missing optional link clears it. Callers never send internal ids: omit the internal key, accept the external one, resolve it in the model.
 - Parent may arrive after child: the model reads the parent and, if missing, inserts a placeholder with only the external id; the parent's own upsert fills it.
+- Ordering keys (update timestamps, versions): know their precision (e.g. dates truncated to milliseconds), expect equal values, and define the tie rule explicitly.
 - Batch methods only when callers send several items: array input, plural name, one statement, keys de-duplicated in the model first (same key twice: newest version wins, ties go to the later item). The same tie rule holds in SQL against stored rows (`<=`): later notification wins everywhere, and a redelivery just rewrites the same values. Empty input returns an empty result without touching the database. The response holds the rows actually written; skipped (stale) items are not echoed. Otherwise single-item functions.
 - Request schemas omit internal ids and database-managed columns (`updatedTs`, generated uuids); timestamps the caller owns (the source system's created/updated time) stay in the request. An optional link is `.nullish()`, so `null` and absence both clear it.
 - When you delete a model check, move its rule into the schema (e.g. a removed `!amount` guard becomes `.positive()`) or state in the PR why it is gone.
@@ -41,12 +45,13 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 
 ## 4. Validation
 - Validate every input at the boundary with the project's schema library, internal callers included. The schema checks shape; normalising values (trim, drop empty, de-duplicate) is a model decision. Build request schemas from the entity schema (omit/partial, then extend). Invalid input fails in the schema, not in the model.
+- Encode business value ranges in the schema (positive amounts, non-empty names, max lengths), not only types.
 - Map input to explicit fields; never spread raw input into records or queries. Cap sizes on public endpoints.
 
 ## 5. Errors and logging
 - Throw only the project's base error class or its subclasses, with a code and a functional/technical classification; never bare errors or strings. One class per failure mode.
 - Re-throw a caught error as is only if it is already a project error; otherwise wrap it, keeping the original as `cause`. Static messages; variable data in structured info.
-- Use the project's logger, never `console.log`. Log a failure once: either throw with context and let the framework log it, or log once in the model and throw the wrapped error (follow the project's pattern); never log it again in another layer. Structured fields with the error under the project's key; no whole objects, secrets, tokens or personal data. Levels: debug, info, warn (monitored), error (must be fixed).
+- Use the project's logger, never `console.log`. Log a failure once: either throw with context and let the framework log it, or log once in the model and throw the wrapped error (follow the project's pattern); never log it again in another layer. Structured fields with the error under the project's key — check that this key really serialises the error (stack, cause); if the lint rule and the logger disagree, follow lint and raise it centrally; no whole objects, secrets, tokens or personal data. Levels: debug, info, warn (monitored), error (must be fixed).
 
 ## 6. Config, cache, security, dependencies
 - Config through the project's config system; secrets only in its secret store, never in code, config files or logs. Constants in a `constants` module; no magic values.
@@ -80,5 +85,5 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 
 ## 9. Scope and PRs
 - Touch only what the task needs: no drive-by refactors, renames or formatting; open a ticket for unrelated issues. In code the change must touch anyway, bring the touched types and signatures up to the standards (e.g. a record aliased to an API type, an exported one-off input alias); leave untouched statements (such as an old log line) as they are. A migration PR holds only the migration; code using it ships next and names the order.
-- Small PRs, one topic, draft until ready; never bypass hooks; tests included. Conventional Commit title with the scope the project uses. Keep the description true after every push.
+- Small PRs, one topic, draft until ready; never bypass hooks; tests included. Conventional Commit title with the scope the project uses. Keep the description true after every push: re-read it against the code (behaviour on missing fields, defaults, test counts, release order).
 - In review threads say "done" only for pushed code; link the guideline instead of re-arguing.
