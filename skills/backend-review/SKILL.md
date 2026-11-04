@@ -7,7 +7,7 @@ description: Review backend code (a PR, a branch or a local diff) against the sa
 
 Generic and reusable: no company or project data lives here. The rules come from two places, read every time:
 1. `backend-implementation` skill (`../backend-implementation/SKILL.md`): the generic rules, §1–§10.
-2. The project's standards: follow the root `CLAUDE.md` / `AGENTS.md` (workspace and repo) to its coding-standards, style and review docs (typically `docs/coding-standards*.md`, a `--review` doc per repo) and any project-local review skill (e.g. a migration checklist).
+2. The project's standards: follow the root `CLAUDE.md` / `AGENTS.md` (workspace and repo) to its coding-standards, style and review docs (typically `docs/coding-standards*.md`, a `--review` doc per repo) and any project-local review skill (e.g. a migration checklist). If the project documents its reviewers' expectations, review with those reviewers' questions.
 
 Order of authority: repo `CLAUDE.md` → project docs → generic rules. A finding cites the rule it breaks (doc path + section, or skill §).
 
@@ -28,6 +28,7 @@ Use the groups of `../backend-implementation/references/review-checklist.md` as 
 8. **Naming and style** (backend-implementation §10 + the project's style doc): `Feature: <Verb> <object>`; `Scenario: Should <verb> <object> [when <condition>]`; `it('should …')`; method description = verb-first sentence with the guarantee; response description `Returns the <past-participle> <entities>`; response field named after the operation (`upserted<Entities>`); schema/type names; `resolve<Entity><Key>` and `get`/`insert`/`update`/`upsert…If…` provider names; cross-entity fields (uuid or external id) taken from the owning entity's schema; pure helpers under `helpers/`.
 9. **PR description:** matches the code (missing-field behaviour, defaults, contract changes, test counts).
 10. **Scope and readability:** no drive-by changes; no intent comments (only DB/library quirks); one job per function, matching its name; names carry meaning; PR title and description true.
+11. **Simplicity** (backend-implementation §11; ask "why do we need this?"): single-use mappers, wrappers and helper files inlined; schema library only at input; defensive checks justified by the source's documented model; one error path unless the caller needs two; test-only side effects don't change the response; existing log lines kept; shared constants and errors generic; only the events the ticket needs.
 
 ## Step 3 — report
 - Findings ranked: **blocking** (wrong behaviour, broken contract, layering or security), **should fix** (standards), **suggestion** / **[nit]** (style and naming). Each finding: `file:line` — what is wrong (rule cited) — **How it can fail** (a concrete input or timing, e.g. two parallel calls, a redelivery, a lagging replica, a 0 value) — **Solution proposal** (code or exact title).

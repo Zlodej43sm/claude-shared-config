@@ -16,6 +16,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 5. Review lessons: a generic lesson goes here (and into `references/review-checklist.md`); a project-specific one goes into the project's docs.
 6. Before opening a PR and after every push, run `references/review-checklist.md` (grouped like reviewers' feedback: architecture, contracts, data, tests, naming, organisation, errors, process).
 7. When reviewers disagree, follow the more specific or newest convention and say in both threads what you did and why.
+8. If the project documents its reviewers' expectations (a reviewer-profile or review-lessons doc), read it and write the code those reviewers would approve on the first pass.
 
 ## 1. Components and layering
 
@@ -47,11 +48,16 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - Validate every input at the boundary with the project's schema library, internal callers included. The schema checks shape; normalising values (trim, drop empty, de-duplicate) is a model decision. Build request schemas from the entity schema (omit/partial, then extend). Invalid input fails in the schema, not in the model.
 - Encode business value ranges in the schema (positive amounts, non-empty names, max lengths), not only types.
 - Map input to explicit fields; never spread raw input into records or queries. Cap sizes on public endpoints.
+- The schema library runs only at the boundary (route or method input). A third party's required fields go into that input schema, taken from its documented model (SDK types, API reference); never re-validate (`safeParse`) inside the domain.
+- No defensive checks for states the source's documented contract makes impossible. Before adding one, check the source's model; if you can't say how the state happens, don't handle it.
 
 ## 5. Errors and logging
 - Throw only the project's base error class or its subclasses, with a code and a functional/technical classification; never bare errors or strings. One class per failure mode.
 - Re-throw a caught error as is only if it is already a project error; otherwise wrap it, keeping the original as `cause`. Static messages; variable data in structured info.
 - Use the project's logger, never `console.log`. Log a failure once: either throw with context and let the framework log it, or log once in the model and throw the wrapped error (follow the project's pattern); never log it again in another layer. Structured fields with the error under the project's key — check that this key really serialises the error (stack, cause); if the lint rule and the logger disagree, follow lint and raise it centrally; no whole objects, secrets, tokens or personal data. Levels: debug, info, warn (monitored), error (must be fixed).
+- One error path unless the caller really needs two: when the caller reacts the same way to every failure, let the error reach the framework (it logs once and answers 5xx) instead of special-casing error kinds.
+- A side effect that only serves testing or monitoring (a CI trigger, a metric, a notification) never changes the response to the caller: log the error and answer success.
+- Keep an existing log line unless it is wrong. When more context is needed, log the payload the way sibling handlers do (no secrets or personal data) instead of writing a summariser; don't log fields the platform already adds (environment, application).
 
 ## 6. Config, cache, security, dependencies
 - Config through the project's config system; secrets only in its secret store, never in code, config files or logs. Constants in a `constants` module; no magic values.
@@ -87,3 +93,12 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - Touch only what the task needs: no drive-by refactors, renames or formatting; open a ticket for unrelated issues. In code the change must touch anyway, bring the touched types and signatures up to the standards (e.g. a record aliased to an API type, an exported one-off input alias); leave untouched statements (such as an old log line) as they are. A migration PR holds only the migration; code using it ships next and names the order.
 - Small PRs, one topic, draft until ready; never bypass hooks; tests included. Conventional Commit title with the scope the project uses. Keep the description true after every push: re-read it against the code (behaviour on missing fields, defaults, test counts, release order).
 - In review threads say "done" only for pushed code; link the guideline instead of re-arguing.
+- Handle only the events and inputs the ticket's data needs. A pre-existing gap you notice (an unhandled event type, an old status code) goes to its own ticket, not into this PR.
+- When the diff deletes lines that look like removing data or behaviour but don't (an early return, a guard), say in the PR description what is still sent or kept and why the lines went.
+
+## 11. Abstractions and reuse ("why do we need this?")
+- No single-use abstractions. A mapper, helper, wrapper or file earns its own place only if it is reused, has enough logic to deserve its own tests, or names a meaningful domain conversion; otherwise keep the transformation inline where it is consumed.
+- Don't wrap an existing client call in a one-line function; call the client where it is needed.
+- Don't move a handler's core flow into internal helpers with return-value protocols (`returns<X> | undefined`); keep the flow readable in one place.
+- Shared values are generic: a response message used by several handlers is one constant in the shared constants module, not a per-route dictionary; a failure kind several flows share gets one parameterised error class (`<Kind>Error({ message, cause, info })`), not one class per flow.
+- Prefer the simplest code the source's contract allows. Every extra layer, check, branch or changed log line must answer "why do we need this?" before you push.

@@ -28,12 +28,15 @@ A test exists only if it proves a behaviour that **no other test proves** and th
   A higher-level test is justified only when it adds something the lower one can't (a real database, real wiring, the real contract) — and then it asserts that addition, not the lower-level logic again.
 - **Copies with different data:** variants of the same behaviour are one parameterised test (table/each/outline), not N copies.
 - **Implementation details:** private helpers already exercised through their caller's tests, call order that isn't part of the contract, log lines, snapshot dumps of large objects.
+- **Other components' rules:** another service's input validation (mock its error only if your code reacts to it in a specific way), the validity of generated API documentation (the tooling owns it).
 
 ## Step 3 — shape of each test
 - One behaviour per test; its name states subject, condition and outcome (follow the project's naming doc).
 - Fixtures are minimal and clean: only the data the behaviour needs, already in normalised form unless normalisation is the behaviour.
 - A failure test asserts **why** it failed (error type/code/message or the invalid fields), not just "failed"; no unrelated side-effect checks after it.
 - Assertions check the observable outcome of that behaviour; don't re-assert what a sibling test already asserts.
+- Mocked collaborator responses carry realistic values (what the collaborator really returns), not empty placeholders.
+- When one entry point handles several event types, each type gets its own test, so the test list shows which events it answers.
 
 ## Step 4 — clean up what you touch
 - In files you change, delete or merge tests that duplicate each other or test library guarantees; say so in the PR (the "Tests" line: added / removed / why).

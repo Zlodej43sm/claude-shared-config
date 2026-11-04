@@ -7,6 +7,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - No read-then-write in a model; a full-entity upsert is one `ON CONFLICT` statement?
 - With a read/write split (replicas), does every read that decides a write, or follows a write in the same request, use the primary?
 - Each component does only what its type may do (owns data / orchestrates / consumes / adapts)?
+- No one-line wrapper around an existing client call; the handler's flow not split into internal helpers with return-value protocols?
 
 ## 2. Contracts and API design
 - Request and response schemas built from the entity schema; cross-entity fields reuse the owning entity's field schema?
@@ -18,11 +19,13 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - Business value ranges encoded in the schema (positive amounts, non-empty names, max lengths)? A deleted model check moved into the schema?
 - Ordering keys: their precision known (e.g. timestamps truncated to milliseconds), ties defined, and the same tie rule used in the model and in SQL?
 - Late, duplicated and redelivered messages handled idempotently?
+- Schema library used only at the input boundary, with the third party's required fields from its documented model? No defensive check for a state the source's contract forbids?
 
 ## 4. Tests (see the `test-design` skill)
 - Each test proves one unique behaviour at the lowest level; no duplicates, no implied tests, no schema-library tests?
 - Failure tests assert the reason (error code/message/fields) and nothing unrelated?
 - Model-only logic proven by unit tests; functional fixtures clean?
+- No test of a downstream service's validation or of generated API docs? Mocked collaborator responses carry realistic values? One scenario per event type the endpoint handles?
 
 ## 5. Naming
 - Scenario titles: `Should <verb> <object> when <condition as the caller sees it>`, naming the asserted fields, "stored" not "existing"?
@@ -33,13 +36,16 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - One job per function; pure helpers with their own tests in `helpers/`, trivial single-use logic inline?
 - No comments for intent or restating code; only DB/library quirks?
 - Touched types and signatures brought up to the standards; untouched code left alone; dead code from the change removed?
+- Every extracted function or file reused, test-worthy or a named domain conversion (otherwise inlined)? Shared constants and error classes generic, not per route or per flow?
 
 ## 7. Errors and logging
 - Project error classes with `cause`; static messages; one log per failure?
 - The logger's error key actually serialises the error (stack, cause)? If the lint rule and the logger disagree, follow lint and raise it centrally?
 - No secrets or personal data in new log lines?
+- One error path unless the caller needs two? A test-only side effect (CI trigger) never changes the response? Existing log lines kept, payload logged like the sibling handlers?
 
 ## 8. PR and review process
 - PR description re-read against the code after every push (defaults for missing fields, test counts, release order)?
 - Every review thread answered; "done" only for pushed code ("in the next push" otherwise)?
 - When two reviewers disagree, the choice follows the more specific/newest convention, and both threads say what was done and why?
+- Only the events and inputs the ticket needs? Lines that look like removed data (a deleted guard) explained in the description?
