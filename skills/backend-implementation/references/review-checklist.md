@@ -10,7 +10,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 
 ## 2. Contracts and API design
 - Request and response schemas built from the entity schema; cross-entity fields reuse the owning entity's field schema?
-- Breaking or stricter change (partial → full, optional → required, removed/renamed field) identified, every caller checked, release order stated?
+- Breaking or stricter change (partial → full, optional → required, removed/renamed field) identified, every caller checked, release order stated? "Caller sends every field" verified by compiling each caller against the new types (a field covered only by a schema default still breaks the caller's types when request types are the schema's output)?
 - Edge cases (empty input, not found, duplicates) behave like the sibling methods?
 - Response field and description named after the operation (`upserted<Entities>`, `Returns the upserted <entities>`)?
 
