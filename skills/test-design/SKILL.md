@@ -17,7 +17,7 @@ A test exists only if it proves a behaviour that **no other test proves** and th
 3. For each new behaviour, check the map. Add a test only for a triple that is missing.
 
 ## Step 2 — what not to test
-- **Library, framework, language and tool guarantees:** schema/type validation (types, required fields, enums, formats, integer checks), ORM or query-builder mechanics, framework routing or serialisation, cloud/provider APIs, container or orchestrator schemas, template syntax, what the compiler, type checker, linter, formatter, `validate`/`plan` step or CI policy check already enforces.
+- **Library, framework, language and tool guarantees:** schema/type validation (types, required fields, enums, formats, integer checks) at any entry point — service methods, API and webhook routes (an invalid payload only to get the framework's 400), message consumers, job arguments — ORM or query-builder mechanics, framework routing or serialisation, cloud/provider APIs, container or orchestrator schemas, template syntax, what the compiler, type checker, linter, formatter, `validate`/`plan` step or CI policy check already enforces.
 - **Implied behaviour:** a case that a combination of existing tests already proves (A proves "link new", B proves "move existing" ⇒ "link existing" is covered).
 - **The same behaviour at two levels:** prove it once, at the **lowest level that can prove it**:
   - pure logic, branching, mapping, normalisation, de-duplication, sorting → unit;
@@ -41,6 +41,7 @@ A test exists only if it proves a behaviour that **no other test proves** and th
 ## Step 4 — clean up what you touch
 - In files you change, delete or merge tests that duplicate each other or test library guarantees; say so in the PR (the "Tests" line: added / removed / why).
 - Don't add a test only to raise coverage; coverage follows unique behaviours.
+- In a file you changed substantively, remove pre-existing tests of library guarantees too. In a file you touched only for fixtures or mocks, leave them and list them in the PR (or a ticket) for a follow-up, so the PR stays on topic.
 
 ## Step 5 — self-check before finishing
 Produce (in the plan, PR or review) a table: `test → triple proven → why no other test or tool covers it`. Any row you can't fill is removed. In a review, report each duplicate as should-fix with the test that already covers it.

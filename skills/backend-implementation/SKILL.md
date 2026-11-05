@@ -33,6 +33,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - Storage record types describe columns; API contract types describe requests/responses. Keep them independent: never alias or derive one from the other. Providers take/return records; models map to API types.
 - Type provider inputs inline from the record (`Pick<…>`, `Partial<…> & Pick<…, 'key'>`); don't export one-off input aliases.
 - Contract changes go into the project's shared types package and are regenerated/published per its docs. Prefer `type` aliases and `as const` dictionaries over interfaces and enums unless the project says otherwise. A module used only for types is imported with `import type`.
+- Validating a request field against an enum owned by another service (imported from its types package) rejects any value that service adds before your pin is bumped. When the code checks only one value, accept a string and compare; otherwise keep the pin aligned with the caller's and bump it on release.
 
 ## 3. Entities, upserts, batches
 - A concept with its own lifecycle is its own entity (type, table, methods), linked by id.
@@ -43,6 +44,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - Request schemas omit internal ids and database-managed columns (`updatedTs`, generated uuids); timestamps the caller owns (the source system's created/updated time) stay in the request. An optional link is `.nullish()`, so `null` and absence both clear it.
 - When you delete a model check, move its rule into the schema (e.g. a removed `!amount` guard becomes `.positive()`) or state in the PR why it is gone.
 - Making a schema stricter (partial → full replace, optional → required) is a contract change: check that every caller already sends the fields, and say so in the PR with the release order.
+- A new field a caller doesn't send yet ships in two steps (expand, then contract): (1) release the service with the field optional, (2) release the caller sending it, (3) confirm from logs/traffic that no other caller omits it, (4) release the service with the field required. The PR states the steps and links the follow-up ticket for step 4.
 
 ## 4. Validation
 - Validate every input at the boundary with the project's schema library, internal callers included. The schema checks shape; normalising values (trim, drop empty, de-duplicate) is a model decision. Build request schemas from the entity schema (omit/partial, then extend). Invalid input fails in the schema, not in the model.
@@ -52,16 +54,20 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - No defensive checks for states the source's documented contract makes impossible. Before adding one, check the source's model; if you can't say how the state happens, don't handle it.
 
 ## 5. Errors and logging
+- Quick reference with the full logging rules and a pre-push check: `references/logging.md` (read it before touching a log line or a thrown error).
 - Throw only the project's base error class or its subclasses, with a code and a functional/technical classification; never bare errors or strings. One class per failure mode.
 - Re-throw a caught error as is only if it is already a project error; otherwise wrap it, keeping the original as `cause`. Static messages; variable data in structured info.
 - Use the project's logger, never `console.log`. Log a failure once: either throw with context and let the framework log it, or log once in the model and throw the wrapped error (follow the project's pattern); never log it again in another layer. Structured fields with the error under the project's key — check that this key really serialises the error (stack, cause); if the lint rule and the logger disagree, follow lint and raise it centrally; no whole objects, secrets, tokens or personal data. Levels: debug, info, warn (monitored), error (must be fixed).
 - One error path unless the caller really needs two: when the caller reacts the same way to every failure, let the error reach the framework (it logs once and answers 5xx) instead of special-casing error kinds.
 - A side effect that only serves testing or monitoring (a CI trigger, a metric, a notification) never changes the response to the caller: log the error and answer success.
-- Keep an existing log line unless it is wrong. When more context is needed, log the payload the way sibling handlers do (no secrets or personal data) instead of writing a summariser; don't log fields the platform already adds (environment, application).
+- Before adding or changing a log line, read the project's logging guideline. Keep an existing log line unless it is wrong. Log the few fields you need (ids, types, counts), never a whole object or payload: every property becomes an index field (the index can hit its field limit and stop indexing) and objects you don't control leak personal data. A stringified object in one field is the exception for when you really need all of it, not the default. Don't add a log the framework already writes (request/response and error logs, often with the payload) or one only to carry context: add fields to the logger or a child logger. Don't log fields the platform already adds (environment, application).
 
 ## 6. Config, cache, security, dependencies
-- Config through the project's config system; secrets only in its secret store, never in code, config files or logs. Constants in a `constants` module; no magic values.
+- Config through the project's config system; secrets only in its secret store, never in code, config files or logs. Constants in a `constants` module; no magic values, including literals in conditions (`length === 0`, status codes, limits): name them, or use the project's accepted idiom.
+- One source of truth per set of values: a dictionary declared once `as const`; derive the list (`Object.values`), the union type (`(typeof X)[keyof typeof X]`) and a type guard (`isX(value): value is X`) from it, instead of a second hand-written array or enum of the same values.
 - Cache only where the architecture allows it; every cache has a TTL or size bound.
+- A security, fraud or eligibility rule is enforced by the operation that performs the action (burn, pay, convert), not only by a preflight `can…`/`check…` method the client is expected to call first; both use one shared rule function. Find every entry point that reaches the action (other methods, workers, replays) before calling it fixed.
+- Such a rule fails closed: a missing input it needs denies the action. If a rollout forces a fail-open period, state it in the PR, name the follow-up ticket, and keep the window short. A caller that loads the data for the rule (the user, the account) handles "not found" itself with the not-eligible error, instead of passing `undefined` on and relying on the downstream service to reject it.
 - Check ownership and permissions on every request, deny by default; allow-list outbound URLs and file paths built from input; no `eval` or shell commands with input.
 - Ask before adding a dependency; upgrade majors one at a time, then build and run all tests.
 
@@ -74,6 +80,9 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - **Unit:** every function with business logic, every path. Mock every dependency (spy on the module first, full module mocks last); assert calls with arguments and the return value; don't re-test callees. Providers and pure forwarding functions get no unit test. Parameterise instead of copying tests.
 - **Functional:** cover methods and queries end to end against a real test database (never mocked); mock every outbound HTTP call. A scenario per functional change and per bug fix; reuse the project's shared steps.
 - **Never test the schema library:** don't create any test — unit or functional — whose only purpose is schema validation (wrong type, not an integer, missing or required field, enum, format, "full replace needs every field", a field missing from a batch item). The library already guarantees it; reviewers ask to delete these tests. Only rules the schema's types can't express (mutual exclusion, cross-field refinements) get a failure scenario.
+  - This holds at **every entry point**: service/RPC methods, HTTP API and **webhook routes** (a scenario that posts an invalid payload only to get the framework's 400 from the route's `validate` schema), queue/event consumers, CLI or job arguments. No unit test of a `schemas.ts` file either.
+  - It also holds for **another service's schema**: don't mock a downstream validation error just to show it passes through. Mock it only when your code reacts to it in its own way (e.g. maps it to a non-retryable status), and then assert that reaction.
+- A test that pins a temporary behaviour (fail-open while a field is optional) is named as such and changed by the follow-up that ends it; list it in that ticket.
 - **Every failure scenario asserts why it failed:** the error message and code (or the error data listing the invalid fields), not just "failed"; skip unrelated side-effect checks after a failure.
 - **No duplicate coverage:** before adding a scenario, list what each existing one proves; drop one that a combination of others already covers (link new + move existing ⇒ link existing).
 - **Right level:** logic that runs entirely in the model before any query (de-duplication, normalisation, sorting) is proven by unit tests; functional fixtures use clean, already-normalised data so each scenario tests one thing.
@@ -94,7 +103,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - Small PRs, one topic, draft until ready; never bypass hooks; tests included. Conventional Commit title with the scope the project uses. Keep the description true after every push: re-read it against the code (behaviour on missing fields, defaults, test counts, release order).
 - In review threads say "done" only for pushed code; link the guideline instead of re-arguing.
 - Handle only the events and inputs the ticket's data needs. A pre-existing gap you notice (an unhandled event type, an old status code) goes to its own ticket, not into this PR.
-- When the diff deletes lines that look like removing data or behaviour but don't (an early return, a guard), say in the PR description what is still sent or kept and why the lines went.
+- Don't delete or reshape existing code that feeds data other teams rely on (tracking, reporting, support tools), even when the result is equal: a reviewer can verify one added line faster than a removed guard. When a type change forces an adjustment, keep the code and adapt at the call site (`?? <default>`). If you must delete lines that look like removing data, say in the PR description what is still sent and why.
 
 ## 11. Abstractions and reuse ("why do we need this?")
 - No single-use abstractions. A mapper, helper, wrapper or file earns its own place only if it is reused, has enough logic to deserve its own tests, or names a meaningful domain conversion; otherwise keep the transformation inline where it is consumed.

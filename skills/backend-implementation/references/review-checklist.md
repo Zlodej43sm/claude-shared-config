@@ -8,10 +8,13 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - With a read/write split (replicas), does every read that decides a write, or follows a write in the same request, use the primary?
 - Each component does only what its type may do (owns data / orchestrates / consumes / adapts)?
 - No one-line wrapper around an existing client call; the handler's flow not split into internal helpers with return-value protocols?
+- A security/fraud/eligibility rule enforced by the operation that performs the action (not only a preflight `can…` method), through one shared function, on every entry point that reaches it? Fails closed when its input is missing, and a caller handles "not found" itself rather than forwarding `undefined`?
 
 ## 2. Contracts and API design
 - Request and response schemas built from the entity schema; cross-entity fields reuse the owning entity's field schema?
-- Breaking or stricter change (partial → full, optional → required, removed/renamed field) identified, every caller checked, release order stated? "Caller sends every field" verified by compiling each caller against the new types (a field covered only by a schema default still breaks the caller's types when request types are the schema's output)?
+- Breaking or stricter change (partial → full, optional → required, removed/renamed field) identified, every caller checked, release order stated? "Caller sends every field" verified by compiling each caller against the new types (a field covered only by a schema default still breaks the caller's types when request types are the schema's output)? The caller compiled against the published package version, not a local build of the provider's branch (the base may have moved and changed transitive pins)?
+- A field the caller doesn't send yet: optional now, release order (service → caller → confirm no other caller omits it → required) in the PR, follow-up ticket linked?
+- No strict validation against another service's enum unless the pins stay aligned (checking one value → compare a string)?
 - Edge cases (empty input, not found, duplicates) behave like the sibling methods?
 - Response field and description named after the operation (`upserted<Entities>`, `Returns the upserted <entities>`)?
 
@@ -22,7 +25,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - Schema library used only at the input boundary, with the third party's required fields from its documented model? No defensive check for a state the source's contract forbids?
 
 ## 4. Tests (see the `test-design` skill)
-- Each test proves one unique behaviour at the lowest level; no duplicates, no implied tests, no schema-library tests?
+- Each test proves one unique behaviour at the lowest level; no duplicates, no implied tests, no schema-library tests at any entry point (methods, API and webhook routes with an invalid payload → 400, consumers)?
 - Failure tests assert the reason (error code/message/fields) and nothing unrelated?
 - Model-only logic proven by unit tests; functional fixtures clean?
 - No test of a downstream service's validation or of generated API docs? Mocked collaborator responses carry realistic values? One scenario per event type the endpoint handles?
@@ -36,16 +39,16 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - One job per function; pure helpers with their own tests in `helpers/`, trivial single-use logic inline?
 - No comments for intent or restating code; only DB/library quirks?
 - Touched types and signatures brought up to the standards; untouched code left alone; dead code from the change removed?
-- Every extracted function or file reused, test-worthy or a named domain conversion (otherwise inlined)? Shared constants and error classes generic, not per route or per flow?
+- Every extracted function or file reused, test-worthy or a named domain conversion (otherwise inlined)? Shared constants and error classes generic, not per route or per flow? No magic literals in conditions; lists and types derived from one `as const` dictionary?
 
-## 7. Errors and logging
+## 7. Errors and logging (details: `logging.md`)
 - Project error classes with `cause`; static messages; one log per failure?
 - The logger's error key actually serialises the error (stack, cause)? If the lint rule and the logger disagree, follow lint and raise it centrally?
 - No secrets or personal data in new log lines?
-- One error path unless the caller needs two? A test-only side effect (CI trigger) never changes the response? Existing log lines kept, payload logged like the sibling handlers?
+- One error path unless the caller needs two? A test-only side effect (CI trigger) never changes the response? Existing log lines kept; new ones log only the needed fields (no whole objects or payloads), and none duplicates a log the framework writes?
 
 ## 8. PR and review process
 - PR description re-read against the code after every push (defaults for missing fields, test counts, release order)?
 - Every review thread answered; "done" only for pushed code ("in the next push" otherwise)?
 - When two reviewers disagree, the choice follows the more specific/newest convention, and both threads say what was done and why?
-- Only the events and inputs the ticket needs? Lines that look like removed data (a deleted guard) explained in the description?
+- Only the events and inputs the ticket needs? Code feeding data other teams rely on kept as is, with type gaps closed at the call site?
