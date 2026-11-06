@@ -16,6 +16,10 @@ USAGE (root = --root, else $CLAUDE_PROJECT_DIR, else cwd)
   workspace_docs.py status [--fetch]          per-repo staleness: commits on the default branch (origin/HEAD, else
                                               origin/main|master|develop) since the baseline commit, missing/orphan docs;
                                               --fetch runs `git fetch` first. The local checkout is never used.
+  workspace_docs.py sync [--repos a,b]        `git pull --ff-only` every repo on its default branch: fetch, then
+                                              fast-forward the default branch (the checkout when it is on it and
+                                              clean; else the branch ref only). Never stashes, resets, rebases,
+                                              switches branches or creates merge commits; skips with a reason.
   workspace_docs.py changes [--fetch] [--repos a,b] [--json]
                                               what changed on each repo's default branch since its baseline: commits,
                                               files, CORE changes (manifests, runtime, CI, Docker, agent docs, top-level
@@ -222,6 +226,52 @@ def fetch_all(root, names=None):
     for r in repos(root):
         if not names or r.name in names:
             git(r, "fetch", "--quiet", "--prune", "origin")
+
+
+def git_rc(repo, *args, timeout=180):
+    """Run git, return (returncode, combined output) — for commands whose failure must be reported."""
+    try:
+        p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=timeout)
+        return p.returncode, (p.stdout + p.stderr).strip()
+    except Exception as e:
+        return 1, str(e)
+
+
+def cmd_sync(root, a):
+    names = repo_filter(a)
+    for r in repos(root):
+        if names and r.name not in names:
+            continue
+        rc, out = git_rc(r, "fetch", "--prune", "origin")
+        if rc:
+            print(f"{r.name:32} SKIP fetch failed: {out.splitlines()[-1] if out else rc}"); continue
+        ref = default_ref(r)
+        if not ref:
+            print(f"{r.name:32} SKIP no origin default branch"); continue
+        b = ref.split("/", 1)[1]
+        cur = git(r, "rev-parse", "--abbrev-ref", "HEAD")
+        local = git(r, "rev-parse", "--verify", "--quiet", f"refs/heads/{b}")
+        if not local:
+            print(f"{r.name:32} SKIP no local {b} branch (docs read {ref} anyway)"); continue
+        if git(r, "rev-list", "--count", f"{ref}..{b}") != "0":
+            print(f"{r.name:32} SKIP local {b} has commits not on {ref} (diverged; resolve by hand)"); continue
+        behind = git(r, "rev-list", "--count", f"{b}..{ref}")
+        if behind == "0":
+            print(f"{r.name:32} ok      {b} up to date ({git(r, 'rev-parse', '--short', b)})"); continue
+        old = git(r, "rev-parse", "--short", b)
+        if cur == b:
+            if git(r, "status", "--porcelain", "--untracked-files=no"):
+                print(f"{r.name:32} SKIP on {b} with uncommitted changes ({behind} behind; commit or stash yourself)"); continue
+            rc, out = git_rc(r, "merge", "--ff-only", "--quiet", ref)
+        else:  # fast-forward the branch ref without touching the checked-out branch
+            rc, out = git_rc(r, "fetch", "--quiet", "origin", f"{b}:{b}")
+        new = git(r, "rev-parse", "--short", b)
+        if rc:
+            print(f"{r.name:32} FAIL    {out.splitlines()[-1] if out else rc}")
+        else:
+            note = "" if cur == b else f"  (checkout stays on {cur})"
+            print(f"{r.name:32} pulled  {b} {old}..{new} (+{behind}){note}")
+    return 0
 
 
 def repo_filter(a):
@@ -590,6 +640,7 @@ def main():
     sub.add_parser("inventory")
     c = sub.add_parser("check"); c.add_argument("--json", action="store_true")
     st = sub.add_parser("status"); st.add_argument("--fetch", action="store_true", help="git fetch each repo first")
+    sy = sub.add_parser("sync"); sy.add_argument("--repos")
     ch = sub.add_parser("changes"); ch.add_argument("--fetch", action="store_true"); ch.add_argument("--repos")
     ch.add_argument("--json", action="store_true")
     bl = sub.add_parser("baseline"); bl.add_argument("--set", action="store_true"); bl.add_argument("--repos")
@@ -601,7 +652,7 @@ def main():
     l.add_argument("--title"); l.add_argument("--why"); l.add_argument("--tags"); l.add_argument("--pin", action="store_true")
     a = p.parse_args()
     root = root_dir(a.root)
-    return {"inventory": cmd_inventory, "check": cmd_check, "status": cmd_status, "changes": cmd_changes,
+    return {"inventory": cmd_inventory, "check": cmd_check, "status": cmd_status, "sync": cmd_sync, "changes": cmd_changes,
             "baseline": cmd_baseline, "find": cmd_find, "audit": cmd_audit,
             "scaffold": cmd_scaffold, "link": cmd_link}[a.cmd](root, a)
 

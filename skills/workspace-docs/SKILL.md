@@ -13,7 +13,7 @@ chunk instead of whole repos or stale READMEs.
 - Layout, rules, align-mode mapping: `reference/layout.md` (next to this file).
 - File templates (service, lookup, connection, recipe, root CLAUDE.md): `reference/templates.md`.
 - Mechanical helper (stdlib Python): `.claude/tools/workspace_docs.py` — `inventory`, `check`,
-  `status`, `changes`, `baseline`, `find`, `audit`, `scaffold`, `link`. Run it as `python3 -I .claude/tools/workspace_docs.py <cmd>`
+  `status`, `sync`, `changes`, `baseline`, `find`, `audit`, `scaffold`, `link`. Run it as `python3 -I .claude/tools/workspace_docs.py <cmd>`
   from the workspace root (or pass `--root`). Below it is abbreviated `WSD`.
 
 Read both reference files before writing any chunk.
@@ -23,7 +23,7 @@ Read both reference files before writing any chunk.
 | Command | What it does | Writes |
 |---|---|---|
 | `init` | Build the library from scratch (inventory → per-repo analysis → synthesis → CLAUDE.md → check) | `CLAUDE.md`, `docs/**` |
-| `refresh [--repos=a,b]` | Fetch every repo, diff its default branch (`main`/`master`/…) against the commit the docs were verified at (`docs/baseline.json`), re-verify what changed, rewrite titles/sections/indexes/memory when core structure changed, add docs for new repos, retire docs of removed ones, record the new baseline. Alias: `update` | changed chunks, `docs/baseline.json` |
+| `refresh [--repos=a,b]` | `git pull --ff-only` every repo (`WSD sync`), diff its default branch (`main`/`master`/…) against the commit the docs were verified at (`docs/baseline.json`), re-verify what changed, rewrite titles/sections/indexes/memory when core structure changed, add docs for new repos, retire docs of removed ones, record the new baseline. Alias: `update` | changed chunks, `docs/baseline.json` |
 | `align` | Convert an existing docs tree / oversized CLAUDE.md into the canonical layout without losing content. Alias: `migrate` | `CLAUDE.md`, `docs/**` |
 | `check` | Validate (`WSD check`), fix every FAIL | fixes only |
 | `status [--fetch]` | Staleness dashboard (`WSD status`): per-repo default-branch commits since the baseline, missing/orphan docs, largest chunks | nothing |
@@ -41,7 +41,8 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
 1. **Never record secret values.** Names of env vars/headers/vaults only. Never read `.env`,
    `*credential*`, `*accessKeys*`, key files; list them as "never read/print/commit". `WSD link`
    refuses URLs carrying `token=`/`key=`/`secret=`.
-2. **Never modify the repos** — only `<root>/CLAUDE.md` and `<root>/docs/**`.
+2. **Never modify the repos' files** — write only `<root>/CLAUDE.md` and `<root>/docs/**`. The one git write
+   allowed is `WSD sync` (fetch + fast-forward of the default branch, see rule 9).
 3. **Back up before** `init`/`align`/`refresh`/`remove-repo`:
    `tar czf <root>/docs-backup-$(date +%F-%H%M).tgz -C <root> $(cd <root> && ls -d docs CLAUDE.md 2>/dev/null)`.
    `docs/` is usually not under git; this is the only undo (never overwrite an earlier backup).
@@ -57,7 +58,10 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
 9. **Docs describe the default branch**, not the local checkout (it may sit on a feature branch or lag):
    read code with `git -C <repo> show <ref>:<path>`, `git grep <pat> <ref>`, `git ls-tree <ref>`, where
    `<ref>` is the default branch `WSD changes` prints (`origin/HEAD`, else `origin/main|master|develop`).
-   `git fetch` is the only git command that writes to a repo; never pull, checkout or reset.
+   `refresh` first runs `WSD sync`: fetch, then fast-forward each repo's default branch (the working tree
+   when it is checked out and clean, else only the branch ref). Never stash, reset, rebase, checkout,
+   switch branches or create merge commits; a repo it skips (dirty, diverged, no local default branch)
+   is reported, and its docs are still read from `<ref>`.
 
 ## Procedures
 
@@ -96,7 +100,8 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
    re-verified, content dropped (why), backup path, remaining FAILs.
 
 ### refresh (diff-driven; run the shared steps with these specifics)
-1. **Back up** (rule 3), then `WSD changes --fetch` (fetches all repos, prints per repo: default branch,
+1. **Back up** (rule 3), then `WSD sync` (pulls every repo, fast-forward only; report each skip and why),
+   then `WSD changes` (no `--fetch` needed after sync; prints per repo: default branch,
    baseline..HEAD, commits, changed files, **CORE** changes, chunks citing changed paths, and backticked
    paths in its service chunks that no longer exist). `--json` for a long run. No `docs/baseline.json`
    yet, or "no usable baseline": re-verify that repo fully (shared step 2), then record it.
