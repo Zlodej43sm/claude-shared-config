@@ -140,6 +140,7 @@ Write the triage as a table (id, file, verdict, one-line reason) and keep it for
 - A behaviour change gets a test. When feasible show it is real: temporarily undo the fix and confirm the test fails, then restore.
 - A refactor (splitting a file, grouping parameters) must preserve behaviour: run the tests before and after.
 - If fixing one comment invalidates the wording of docs, README, OpenAPI text or tests elsewhere, update them in the same change.
+- If the PR changes docs, run the `doc-review` self-check (`../doc-review/references/self-check.md`) on every changed doc after the fixes, not only on the lines the comments point at. Reviewers who flag one unmerged claim, history line or duplicated rule usually missed others of the same kind.
 
 ### F4 — Verify
 
@@ -160,6 +161,7 @@ On approval:
 1. Commit in the repository's message style (follow the attribution instruction in the session) and push the PR's branch. Never force-push, never amend published commits, never touch another branch.
 2. Spawn the agent with `mode: post` and `replies_file: $CACHE_DIR/replies.json`. If the user approved only part of it, post only that part.
 3. Report: what was fixed, what was declined and why, what was deferred and where it must be followed up (other repos, tickets, decisions), and anything the checks could not cover.
+4. Lessons: if a valid comment shows an expectation that no shared skill covers (for docs `doc-review`, for backend code `backend-implementation`), propose a generic rule for that skill's "Learning from reviewers" step in the report. Edit the skill only if the user agrees.
 
 If the user declines or edits something, do exactly that and nothing more.
 

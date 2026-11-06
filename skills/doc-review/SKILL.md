@@ -1,17 +1,17 @@
 ---
 name: doc-review
-description: Review or write technical documents - architecture docs, design docs, plans, specs, ADRs/RFCs, data contracts, runbooks, READMEs - in a PR, a branch, a local file or a Confluence/Notion page. Checks that durable docs hold only the target state (transitory plans live elsewhere), that flows and data models are shown as diagrams and tables instead of prose, that the wording is plain and free of AI-style filler, that every claim about code or other repos is true, that the lifecycle questions a reviewer will ask are answered, and that the design covers its failure modes. Use when asked to review a docs-only or design PR, alone or alongside pr-review, and before opening a PR that adds or changes a doc. Read-only - never posts unless asked.
+description: Review or write technical documents - architecture docs, design docs, plans, specs, ADRs/RFCs, data contracts, runbooks, READMEs - in a PR, a branch, a local file or a Confluence/Notion page. Checks that durable docs hold only the target state (transitory plans live elsewhere), that flows and data models are shown as diagrams and tables instead of prose, that the wording is plain and free of AI-style filler, that every claim about code or other repos is true on their default branch, that each rule lives in one place at the right level of detail, that docs, comments, tests and config in the change agree, that the lifecycle questions a reviewer will ask are answered, and that the design covers its failure modes. Use when asked to review a docs-only or design PR, alone or alongside pr-review; whenever you write or edit a doc (including fixing review comments on one); and before opening or updating a PR that adds or changes a doc. Read-only - never posts unless asked.
 ---
 
 # doc-review — review (or write) a technical document
 
 Generic and reusable: no company or project data lives here. Rules come from:
-1. This skill: §A–§G below.
+1. This skill: §A–§I below.
 2. The project's docs conventions: follow the root `CLAUDE.md` / `AGENTS.md` (workspace and repo) to its docs layout, glossary (`CONTEXT.md` or similar), writing-style and review docs. Project rules win over this skill.
 
 A finding cites the rule it breaks (`doc-review §X`, or the project doc path + section).
 
-When **writing** a doc, run the same checks on your own draft before you open the PR; fix them instead of reporting them.
+When **writing** or editing a doc, or fixing review comments on one, run `references/self-check.md` on every changed doc before each commit and before you open or update the PR. Fix what it finds instead of reporting it. It lists the checks in order of how often reviewers raise them.
 
 ## Step 1 — scope
 - Get the changed docs (`git diff <base>...<head> -- '*.md' docs/`) and read each one whole, plus the docs it links and the docs that should link to it.
@@ -22,6 +22,7 @@ When **writing** a doc, run the same checks on your own draft before you open th
 
 **§A Durable vs transitory.**
 - A durable doc states only the desired, durable state. Flag "today", "currently", "where things stand", "we will", "after this change", "phase 1", ticket lists, rollout steps and migration notes in it. That text goes to tickets (epic, tasks), a wiki page, or a separate plan doc.
+- No history either: "previously 409", "the old/legacy behaviour", rollout and rollback order, ticket keys in headings or text (a heading names the concept, e.g. "Session end"). A live config switch may be named once, with a link to the ADR or runbook that owns its rollout.
 - A plan sits in its own place (e.g. `docs/plans/` or the project's equivalent), says what it changes, and links the durable docs it will update. It never sits among the durable architecture docs.
 - If the project has no rule for where plans go, flag it once as a question and propose one; don't invent the layout silently.
 
@@ -39,6 +40,8 @@ When **writing** a doc, run the same checks on your own draft before you open th
 
 **§D Claims are true.**
 - Check every concrete claim against the source: names (topics, routes, env vars, tables, fields, classes), versions, defaults, status codes, "X already does Y", "no service needs to change". Read the sibling repos when available (compare the local checkout with its upstream first); cite `repo/path:line`.
+- The truth is the owning repo's **default branch** (fetch first), not an open PR, a feature branch, a plan doc or a ticket. A durable doc that describes unmerged behaviour (yours or a sibling's) is a finding: that text lands with the code change, or after it merges.
+- A behaviour you cannot find in any code is a finding phrased as "where is this implemented?", never assumed true. Plan docs and tickets are not evidence.
 - Use full, real names (full route paths, real env var names), not shorthand.
 - A wrong claim that the design depends on is blocking; a wrong side remark is a nit.
 
@@ -60,8 +63,18 @@ Missing answers are findings; phrase them as the question a reviewer would ask.
 
 **§G Fan-out.** List every other canonical doc the change makes stale (topology/service map, glossary, contracts, READMEs in other repos) and whether the doc names the follow-up. Missing fan-out is a should-fix.
 
+**§H One home, right altitude.**
+- Each rule lives in one canonical section. Other docs link to it instead of restating it: two copies drift and end up contradicting each other. A rule repeated inside one doc (e.g. once per mode) is stated once.
+- An architecture or contract doc states the rules and contracts that callers and operators depend on. Implementation detail (TTL and timeout values, log event names, internal keys, storage paths, function names) stays in the code or the owning repo's docs.
+- A glossary entry is one short sentence of meaning, with no mechanism. Keep it within the project's length cap if it has one.
+
+**§I The change agrees with itself.**
+- Docs, code comments, test names and comments, e2e assertions, config defaults and READMEs in the same change say the same thing. A contradiction is a finding in each place.
+- A config default the change turns on matches the rollout order the docs state. If it depends on an unmerged change in another repo, the merge order is written down (PR description, README).
+- A test that claims to prove a documented rule fails when the rule breaks. It must not pass because the state is already terminal, a wait returns at once, or the good and bad outcomes look the same.
+
 ## Step 3 — report
-- Findings ranked **blocking** (wrong claim the design relies on, a design gap that loses or leaks data, a durable doc mixing in plan content when the project forbids it), **should fix** (§A–§C, §E–§G gaps), **question**, **[nit]**.
+- Findings ranked **blocking** (wrong claim the design relies on, a design gap that loses or leaks data, a durable doc mixing in plan content when the project forbids it), **should fix** (§A–§C, §E–§I gaps; a durable doc describing unmerged behaviour), **question**, **[nit]**.
 - Each finding: `file:line` — what is wrong (rule cited) — why it matters (a concrete case: a timeout, a retry, a second instance, a reader who can't find the answer) — the proposed fix (a ready diagram/table skeleton or replacement text in a `suggestion` block).
 - Ask when the intent is unclear instead of asserting.
 - Read-only: don't edit, post or resolve threads unless the user asks.

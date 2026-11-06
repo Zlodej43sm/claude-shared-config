@@ -22,6 +22,7 @@ set -a; . .claude/.env; set +a
 - The ticket `$JIRA_WORKSPACE-<n>`, from the branch name or title. Use `/get-jira-task` when the reason for the change isn't clear from the code.
 - Linked PRs (same ticket, stacked branches) and the deploy or merge order between them.
 - Test results from an actual run in this session or in CI. Never invent counts.
+- Docs in the diff (`*.md`, ADRs, READMEs, glossary): run the `doc-review` self-check (`../doc-review/references/self-check.md`) on them before you write the body. Tell the user what it finds; don't post the PR over an open finding without their go-ahead.
 - A project recipe, if one exists (for example `docs/recipes/pr-description.md`), for repo-specific templates and rules. Project rules win over this file.
 
 ## Step 2 — Title

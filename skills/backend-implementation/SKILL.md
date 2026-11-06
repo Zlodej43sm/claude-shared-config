@@ -14,7 +14,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 3. No project standards found: apply the defaults below and say so in your plan or review.
 4. When unsure how something should look, copy the newest repo or module of the same kind in the project, not the older code next to your change.
 5. Review lessons: a generic lesson goes here (and into `references/review-checklist.md`); a project-specific one goes into the project's docs.
-6. Before opening a PR and after every push, run `references/review-checklist.md` (grouped like reviewers' feedback: architecture, contracts, data, tests, naming, organisation, errors, process).
+6. Before opening a PR and after every push, run `references/review-checklist.md` (grouped like reviewers' feedback: architecture, contracts, data, tests, naming, organisation, errors, process). If the change adds or edits docs (`*.md`, ADRs, READMEs, glossary, code comments that describe behaviour), also run the `doc-review` self-check (`../doc-review/references/self-check.md`) on them.
 7. When reviewers disagree, follow the more specific or newest convention and say in both threads what you did and why.
 8. If the project documents its reviewers' expectations (a reviewer-profile or review-lessons doc), read it and write the code those reviewers would approve on the first pass.
 
@@ -23,6 +23,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - Respect the project's component types (what each may call, own and publish). Never put domain rules in a component that doesn't own the domain; one component wraps each third-party API.
 - Inside a component: **handler** (thin: validate, call one model, map errors) → **model** (business logic) → **provider/repository** (data access) or **client** (outbound calls). A handler never queries; a provider never decides.
 - **Provider / repository:** one query against one resource. Plain verbs over full rows: `get<Entity>(filters)`, `get<Entities>(filters)`, `insert<Entity>`, `update<Entity>`, `delete<Entity>`; name a write that may skip rows after its condition (`upsert<Entities>IfNewer`); an insert-or-return-existing keeps the plain `insert<Entity>`. Not in a provider: `getOrCreate`, single-column getters, `if`/`throw` on results, de-duplication, maps, a second query, calls to other providers, caching. Parameterised queries only.
+- **Extend before adding:** before writing a provider, look for one on the same table. A new filter becomes an optional field of the existing `get<Entities>(filters)` (optional `where` clauses are query building, not decisions). A new column to write becomes an optional field of the existing `update<Entity>(key, changes)`, which writes only the fields provided (`undefined` leaves a column, `null` clears it). No `get<Entities>With<Condition>` or `update<Entity><Column>` siblings, and no second model wrapper copied from the first.
 - **Concurrency exception:** a condition that must hold at write time stays in the SQL statement (`ON CONFLICT … DO UPDATE … WHERE stored <= incoming`, insert-or-return-existing). The model must not replace it with read-then-write.
 - **Full-entity upsert = one statement:** when the request carries the whole entity, the provider runs one `INSERT … ON CONFLICT (<key>) DO UPDATE` (`upsert<Entity>`); the model never reads the row to choose insert vs update — that races under parallel calls and a lagging replica.
 - **Model:** skip empty input, de-duplicate, resolve links, check existence, throw domain errors, orchestrate providers/clients, map records to API types. One function, one job: a function's name states everything it does (a de-duplicator doesn't also normalise). Inline single-use logic; a local helper only when its name states a concept.
@@ -34,6 +35,10 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - Type provider inputs inline from the record (`Pick<…>`, `Partial<…> & Pick<…, 'key'>`); don't export one-off input aliases.
 - Contract changes go into the project's shared types package and are regenerated/published per its docs. Prefer `type` aliases and `as const` dictionaries over interfaces and enums unless the project says otherwise. A module used only for types is imported with `import type`.
 - Validating a request field against an enum owned by another service (imported from its types package) rejects any value that service adds before your pin is bumped. When the code checks only one value, accept a string and compare; otherwise keep the pin aligned with the caller's and bump it on release.
+- Every new response field has a named consumer: the PR description links the caller change that reads it. Without one, leave the field out (reviewers ask "is this needed?"). A nullable field's description says what `null` means; a timestamp is an ISO 8601 string with offset.
+- A field newly read from another component's response can be missing: in cache entries written before your deploy (for up to the cache TTL) and from a provider not released yet. Normalise it once where it enters the model (`?? null`) or change the cache key; code after that checks one empty value, never `!== null` on something that can be `undefined`.
+- Public API fields (read by apps or other teams) take the names and types their sibling types already use (siblings have `endDate` → not `endsAt`), say whether an end is included, and are additive so old clients keep working. A consumer of a period end compares and displays it with the provider's boundary rule: with an exclusive end, hide at `now >= end` and show the last included day, not the end itself.
+- Sentences the backend builds for users: one translation key per sentence, with ICU `select`/`plural` for the variable parts (a country, whether a date exists), never concatenated fragments. A date in offer or legal text is formatted in the time zone where the offer applies, not the viewer's.
 
 ## 3. Entities, upserts, batches
 - A concept with its own lifecycle is its own entity (type, table, methods), linked by id.
@@ -45,6 +50,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - When you delete a model check, move its rule into the schema (e.g. a removed `!amount` guard becomes `.positive()`) or state in the PR why it is gone.
 - Making a schema stricter (partial → full replace, optional → required) is a contract change: check that every caller already sends the fields, and say so in the PR with the release order.
 - A new field a caller doesn't send yet ships in two steps (expand, then contract): (1) release the service with the field optional, (2) release the caller sending it, (3) confirm from logs/traffic that no other caller omits it, (4) release the service with the field required. The PR states the steps and links the follow-up ticket for step 4.
+- **Sync from an external source of truth** (a job copying config from a third party into the database): a key absent at the source clears the stored value; a malformed value keeps the stored value and logs the bad key; a missing target row is logged and skipped; only rows whose value changed are written (compare dates by time value, not by reference), each write logging the previous and new value. Each parser handles one family of keys and the other parsers skip that family explicitly, so a new family is never reported as invalid by an older parser.
 
 ## 4. Validation
 - Validate every input at the boundary with the project's schema library, internal callers included. The schema checks shape; normalising values (trim, drop empty, de-duplicate) is a model decision. Build request schemas from the entity schema (omit/partial, then extend). Invalid input fails in the schema, not in the model.
@@ -52,6 +58,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - Map input to explicit fields; never spread raw input into records or queries. Cap sizes on public endpoints.
 - The schema library runs only at the boundary (route or method input). A third party's required fields go into that input schema, taken from its documented model (SDK types, API reference); never re-validate (`safeParse`) inside the domain.
 - No defensive checks for states the source's documented contract makes impossible. Before adding one, check the source's model; if you can't say how the state happens, don't handle it.
+- Parse dates from external input strictly: a full ISO 8601 date-time with offset, anything else is invalid. `new Date(value)` also accepts date-only strings (read as UTC midnight) and locale formats (read in the server's time zone), which silently move a cut-off.
 
 ## 5. Errors and logging
 - Quick reference with the full logging rules and a pre-push check: `references/logging.md` (read it before touching a log line or a thrown error).
@@ -65,7 +72,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 ## 6. Config, cache, security, dependencies
 - Config through the project's config system; secrets only in its secret store, never in code, config files or logs. Constants in a `constants` module; no magic values, including literals in conditions (`length === 0`, status codes, limits): name them, or use the project's accepted idiom.
 - One source of truth per set of values: a dictionary declared once `as const`; derive the list (`Object.values`), the union type (`(typeof X)[keyof typeof X]`) and a type guard (`isX(value): value is X`) from it, instead of a second hand-written array or enum of the same values.
-- Cache only where the architecture allows it; every cache has a TTL or size bound.
+- Cache only where the architecture allows it; every cache has a TTL or size bound. Cache the raw upstream data and take time-dependent decisions (expiry, opening hours, eligibility windows) after the cache read, so they are exact whatever the TTL.
 - A security, fraud or eligibility rule is enforced by the operation that performs the action (burn, pay, convert), not only by a preflight `can…`/`check…` method the client is expected to call first; both use one shared rule function. Find every entry point that reaches the action (other methods, workers, replays) before calling it fixed.
 - Such a rule fails closed: a missing input it needs denies the action. If a rollout forces a fail-open period, state it in the PR, name the follow-up ticket, and keep the window short. A caller that loads the data for the rule (the user, the account) handles "not found" itself with the not-eligible error, instead of passing `undefined` on and relying on the downstream service to reject it.
 - Check ownership and permissions on every request, deny by default; allow-list outbound URLs and file paths built from input; no `eval` or shell commands with input.
@@ -73,6 +80,8 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 
 ## 7. Readability
 - Names carry the meaning: intent-named functions, named booleans, variables naming the situation, response fields naming what they hold.
+- A collection's name says exactly what it holds. Name query results after the filter that produced them (`<rows>Matching<Input>`), not after a property some rows lack (`<rows>With<Field>` when the field can be null). A set that also holds invalid entries carries no "valid" word. A wrong name makes the reader misread the logic (why doesn't an invalid value clear the stored one?).
+- Build a lookup map only from the rows it is read with. Merging two result sets into one `Map` lets the later row silently override the earlier one and keeps keys nobody reads.
 - No comments for intent or business reasons (they go in the PR description) and none that restate the code or the function name. A one-line comment only for a non-obvious technical behaviour of a database or library (e.g. why a no-op update is used). Fix root causes; `async/await`, not promise chains; no lint suppression without reason.
 
 ## 8. Tests
@@ -86,6 +95,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - **Every failure scenario asserts why it failed:** the error message and code (or the error data listing the invalid fields), not just "failed"; skip unrelated side-effect checks after a failure.
 - **No duplicate coverage:** before adding a scenario, list what each existing one proves; drop one that a combination of others already covers (link new + move existing ⇒ link existing).
 - **Right level:** logic that runs entirely in the model before any query (de-duplication, normalisation, sorting) is proven by unit tests; functional fixtures use clean, already-normalised data so each scenario tests one thing.
+- A date or threshold rule gets one test on each side of the boundary, with constants named by their side (`CREATED_BEFORE_END_DATE`, `CREATED_AFTER_END_DATE`).
 - Names follow §10.
 
 ## 10. Naming and style (reviewer-preferred forms; the project's style doc gives concrete examples)
@@ -96,12 +106,17 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - **Schemas and types:** `<entity>Schema` + `type <Entity>`; `<method>RequestSchema` / `<method>ResponseSchema` + `<Method>Request` / `<Method>Response`; batch items `<method>InputSchema` / `<Method>Input`. A field that belongs to another entity — its uuid or its external id in a request — reuses that entity's field schema (`<entity>Schema.shape.<key>.nullish()`), never a redeclared primitive, so the two stay in sync.
 - **Model / provider / handler names:** handlers follow the newest sibling's form; find-or-create of a link in a model is `resolve<Entity><Key>`; providers use `get` / `insert` / `update` / `upsert<Entities>If<Condition>`. Entity name constants and error wrappers follow the project's existing pattern.
 - **Files:** model functions in `models/<domain>/`; pure helpers (no I/O, e.g. normalising values) in `models/<domain>/helpers/` with tests in `helpers/__tests__/`.
+- **Reuse the repo's vocabulary:** before naming a column, field or function, grep the repo for the same concept and reuse its word and its pair (`valid_from` → `valid_to`, `active_from` → `active_to`); no synonym the repo doesn't use (`until`, `end`, `expires`). A reused name brings its semantics: an interval end is exclusive (half-open `[from, to)`, active while `now < to`) unless the repo's existing pair says otherwise; store the first instant after the period (next local midnight), never `23:59:59.999`, which rounding to the column's precision silently moves. Say the boundary and time zone in the PR.
+- **Short names:** a file or function name is as short as its scope allows. When a new file handles another variant of what an existing module parses or syncs, extend that module or keep its family name; a name chaining every qualifier (`parse<Source><Entity><SubEntity><Field>Attributes`) signals a split nobody needs.
+- **A rename lands everywhere in the same round:** column, record and API fields, function, file, type and constant names, log prefixes, across every stacked PR. Names owned by another system (a third party's attribute key) keep that system's word; the parser of that data is where the word changes.
 - **Consistency over invention:** before choosing an edge-case behaviour (empty batch, not found, duplicates), check how sibling methods behave and align (e.g. an empty batch returns an empty array, not an error). Reviewers ask "what do the other methods do?".
 
 ## 9. Scope and PRs
 - Touch only what the task needs: no drive-by refactors, renames or formatting; open a ticket for unrelated issues. In code the change must touch anyway, bring the touched types and signatures up to the standards (e.g. a record aliased to an API type, an exported one-off input alias); leave untouched statements (such as an old log line) as they are. A migration PR holds only the migration; code using it ships next and names the order.
 - Small PRs, one topic, draft until ready; never bypass hooks; tests included. Conventional Commit title with the scope the project uses. Keep the description true after every push: re-read it against the code (behaviour on missing fields, defaults, test counts, release order).
+- The PR description says where a new rule is **not** enforced (paths that rely on another system to check it), and lists the manual steps needed before the production release (config to create in a third-party tool, with the exact value).
 - In review threads say "done" only for pushed code; link the guideline instead of re-arguing.
+- A pin on another component's prerelease build is a merge blocker: the PR says so with the release order, and the released version replaces it before merge. Recompile and re-check behaviour then: the prerelease may predate the provider's last review fixes (a renamed field, a changed boundary).
 - Handle only the events and inputs the ticket's data needs. A pre-existing gap you notice (an unhandled event type, an old status code) goes to its own ticket, not into this PR.
 - Don't delete or reshape existing code that feeds data other teams rely on (tracking, reporting, support tools), even when the result is equal: a reviewer can verify one added line faster than a removed guard. When a type change forces an adjustment, keep the code and adapt at the call site (`?? <default>`). If you must delete lines that look like removing data, say in the PR description what is still sent and why.
 

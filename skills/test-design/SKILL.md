@@ -37,6 +37,7 @@ A test exists only if it proves a behaviour that **no other test proves** and th
 - Assertions check the observable outcome of that behaviour; don't re-assert what a sibling test already asserts.
 - Mocked collaborator responses carry realistic values (what the collaborator really returns), not empty placeholders.
 - When one entry point handles several event types, each type gets its own test, so the test list shows which events it answers.
+- Time-dependent logic runs on a fixed clock (fake timers restored after each test, or the project's "given the date is" step), never on the real date, so the test does not change result when the calendar passes the boundary.
 
 ## Step 4 — clean up what you touch
 - In files you change, delete or merge tests that duplicate each other or test library guarantees; say so in the PR (the "Tests" line: added / removed / why).
