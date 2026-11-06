@@ -13,7 +13,7 @@ chunk instead of whole repos or stale READMEs.
 - Layout, rules, align-mode mapping: `reference/layout.md` (next to this file).
 - File templates (service, lookup, connection, recipe, root CLAUDE.md): `reference/templates.md`.
 - Mechanical helper (stdlib Python): `.claude/tools/workspace_docs.py` — `inventory`, `check`,
-  `status`, `find`, `audit`, `scaffold`, `link`. Run it as `python3 -I .claude/tools/workspace_docs.py <cmd>`
+  `status`, `changes`, `baseline`, `find`, `audit`, `scaffold`, `link`. Run it as `python3 -I .claude/tools/workspace_docs.py <cmd>`
   from the workspace root (or pass `--root`). Below it is abbreviated `WSD`.
 
 Read both reference files before writing any chunk.
@@ -23,10 +23,10 @@ Read both reference files before writing any chunk.
 | Command | What it does | Writes |
 |---|---|---|
 | `init` | Build the library from scratch (inventory → per-repo analysis → synthesis → CLAUDE.md → check) | `CLAUDE.md`, `docs/**` |
-| `refresh [--repos=a,b] [--fetch]` | Re-verify stale repos (HEAD newer than `verified:`), add docs for new repos, retire docs of removed ones, update lookups/indexes. Alias: `update` | changed chunks |
+| `refresh [--repos=a,b]` | Fetch every repo, diff its default branch (`main`/`master`/…) against the commit the docs were verified at (`docs/baseline.json`), re-verify what changed, rewrite titles/sections/indexes/memory when core structure changed, add docs for new repos, retire docs of removed ones, record the new baseline. Alias: `update` | changed chunks, `docs/baseline.json` |
 | `align` | Convert an existing docs tree / oversized CLAUDE.md into the canonical layout without losing content. Alias: `migrate` | `CLAUDE.md`, `docs/**` |
 | `check` | Validate (`WSD check`), fix every FAIL | fixes only |
-| `status [--fetch]` | Staleness dashboard (`WSD status`): per-repo HEAD vs verified, missing/orphan docs, largest chunks | nothing |
+| `status [--fetch]` | Staleness dashboard (`WSD status`): per-repo default-branch commits since the baseline, missing/orphan docs, largest chunks | nothing |
 | `find <question>` | Answer from the library: `WSD find`, Read the top 1–3 chunks, answer with chunk paths cited; say when the library has no answer | nothing |
 | `add-doc <url\|path\|text> [--as recipe\|lookup\|connection\|topic\|service:<repo>] [--name=<slug>]` | Ingest a Confluence/Notion/Jira/web page or local file as a chunk (or merge it into an existing one), with source link | one chunk + index row |
 | `add-link <url> "<why>" [--title=T] [--tags=a,b] [--pin]` | Register a useful link in `docs/links.md`; `--pin` also mirrors it into root `CLAUDE.md` so it is always in context (max 10 pinned) | `docs/links.md`, `CLAUDE.md` |
@@ -43,8 +43,8 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
    refuses URLs carrying `token=`/`key=`/`secret=`.
 2. **Never modify the repos** — only `<root>/CLAUDE.md` and `<root>/docs/**`.
 3. **Back up before** `init`/`align`/`refresh`/`remove-repo`:
-   `tar czf <root>/docs-backup-$(date +%F).tgz -C <root> $(cd <root> && ls -d docs CLAUDE.md 2>/dev/null)`.
-   `docs/` is usually not under git; this is the only undo.
+   `tar czf <root>/docs-backup-$(date +%F-%H%M).tgz -C <root> $(cd <root> && ls -d docs CLAUDE.md 2>/dev/null)`.
+   `docs/` is usually not under git; this is the only undo (never overwrite an earlier backup).
 4. **No content loss** in `align`/`refresh`: every old fact lands in a chunk, or is dropped because
    the code proves it wrong — list drops in the report.
 5. **Evidence:** facts come from files read in this run; mark inference `(I)`; `none found` = searched
@@ -54,13 +54,17 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
 7. **`verified:`** = date the content was last checked against code. Bump it only for chunks you
    re-checked; moving text does not count.
 8. `rtk` may hide `.git` in `ls` and grep matches: use `WSD inventory` / `[ -e d/.git ]` / `rtk proxy`.
+9. **Docs describe the default branch**, not the local checkout (it may sit on a feature branch or lag):
+   read code with `git -C <repo> show <ref>:<path>`, `git grep <pat> <ref>`, `git ls-tree <ref>`, where
+   `<ref>` is the default branch `WSD changes` prints (`origin/HEAD`, else `origin/main|master|develop`).
+   `git fetch` is the only git command that writes to a repo; never pull, checkout or reset.
 
 ## Procedures
 
 ### init / align / refresh / add-repo (shared steps)
 1. **Inventory:** `WSD inventory` (repos with remote, branch, HEAD, version/lock/CI/agent files;
-   other root entries flagged `sensitive`; existing chunks). `refresh`: `WSD status [--fetch]` and
-   pick repos that are stale, new (`MISSING DOC`) or gone (`ORPHAN DOC`); `--repos` narrows it.
+   other root entries flagged `sensitive`; existing chunks). `refresh`: `WSD changes --fetch` (see
+   the refresh procedure) and `WSD status` for new (`MISSING DOC`) or gone (`ORPHAN DOC`) repos; `--repos` narrows it.
 2. **Per-repo analysis** (init: all; refresh/add-repo: selected; align: only where facts are missing).
    Spawn one `Explore` subagent per repo in parallel (≤ 8 at a time; batch tiny repos). Brief each with
    the repo path, the service template from `reference/templates.md`, hard rules 1/2/5, and ask for:
@@ -82,13 +86,43 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
    identifiers from its headings/tables, verified = the analysis date stated in it (else its mtime).
 5. **Root CLAUDE.md** from the skeleton in `reference/templates.md`; every repo name in backticks; keep
    the `<!-- pinned-links:start -->…end -->` block if present.
-6. **Validate:** `WSD check` until `OK`; for `align`/`refresh` also `WSD audit <backup.tgz>` (every
+6. **Validate:** `WSD check` until `OK`; `init`/`refresh`/`add-repo` end with `WSD baseline --set [--repos …]`
+   for the repos re-verified (records the default-branch commit the docs now describe); for `align`/`refresh` also `WSD audit <backup.tgz>` (every
    backticked identifier of the old docs must still exist; restore real losses, list deliberate drops
    such as old doc paths in the report); spot-check 3 facts (one per family) in code; `WSD find` 3
    realistic questions and confirm the right chunk ranks first (else improve its keywords).
    `WSD link --pin` rewrites root CLAUDE.md: re-read it before editing it yourself.
 7. **Report:** command, chunks written/changed, largest chunk, CLAUDE.md size, repos added/removed/
    re-verified, content dropped (why), backup path, remaining FAILs.
+
+### refresh (diff-driven; run the shared steps with these specifics)
+1. **Back up** (rule 3), then `WSD changes --fetch` (fetches all repos, prints per repo: default branch,
+   baseline..HEAD, commits, changed files, **CORE** changes, chunks citing changed paths, and backticked
+   paths in its service chunks that no longer exist). `--json` for a long run. No `docs/baseline.json`
+   yet, or "no usable baseline": re-verify that repo fully (shared step 2), then record it.
+2. **Triage each repo:**
+   - `0 commits` and no CORE/STALE PATH lines → nothing to do; say so in the report.
+   - Only dependency bumps / tests → update version pins (lookups on versions/pins) and move on.
+   - Otherwise brief one `Explore` subagent per repo (≤ 8 in parallel) with: the baseline commit and
+     default ref, rule 9 (read only through the ref), the commit list, the chunks citing changed paths,
+     every service chunk of the repo and every lookup/connection line that names it (`grep -n <repo>
+     docs/`). Ask for `WRONG: "<old>" → "<new>"` with `path:line` evidence, `ADD:` load-bearing facts,
+     `STILL TRUE:` list, and recounts of every number the docs state (methods, routes, tables, …).
+3. **Core structure changed** (CORE `layout`, `renamed`, `default branch`, `remote`, `manifest`,
+   `runtime version`, `ci`, `docker/deploy`, `agent docs`, or a STALE PATH): re-read the repo's entry
+   points and agent docs at the ref and **rewrite, not patch**: the service chunk's H1, `summary`,
+   `keywords`, the labeled bullets (Stack, CI/deploy, Structure, Commands, …) and section names that
+   no longer fit; its rows in `services/README.md`, root `CLAUDE.md` §2/§3/Quick navigation, the
+   workspace map, `commands.md`, change maps, where-things-live and search-recipe lookups. A renamed
+   or moved repo/dir/entry point is fixed everywhere it is cited (`grep -rn <old> CLAUDE.md docs/`).
+4. **Memory:** the agent's own memory files (e.g. `~/.claude/projects/<project>/memory/*.md` and its
+   `MEMORY.md` index) that name a renamed repo, branch, path, count or rule are updated in the same
+   run; delete a memory the change proves wrong.
+5. Apply the reports yourself (shared step 4); keep chunks ≤ 4 KB by moving detail to `--<topic>`
+   overflow chunks, never by dropping facts. Bump `verified:` on chunks you re-checked; update the
+   workspace baseline/HEAD lookup if the library has one.
+6. Validate (shared step 6): `WSD check`, `WSD audit <backup>`, spot-checks, `WSD find`; then
+   `WSD baseline --set` for every repo re-verified, and `WSD changes` must show `0 commits` for them.
 
 ### add-doc
 1. Fetch the source: Confluence → `get-confluence-page` skill; Notion → `get-notion-page`; Jira →

@@ -19,6 +19,8 @@
     change-map.md               optional: per-repo "if you change X, open these files" (split by family if big)
     security.md                 risks to verify (locations and names only)
     drift.md                    stale/incorrect docs and version files
+    baseline.json               per repo: remote, default branch, commit and date the docs were verified
+                                against (`workspace_docs.py baseline --set`; read by `status` and `changes`)
     links.md                    useful-links registry (managed by `workspace_docs.py link`; pinned rows
                                 are mirrored into root CLAUDE.md between pinned-links markers)
     tools/                      optional workspace-specific scripts (e.g. a schema audit); the

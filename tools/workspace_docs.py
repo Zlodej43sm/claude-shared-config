@@ -13,8 +13,17 @@ USAGE (root = --root, else $CLAUDE_PROJECT_DIR, else cwd)
   workspace_docs.py inventory                 JSON: repos (remote, branch, HEAD, version/lock/CI/agent files),
                                               non-repo entries, existing chunks (size, verified)
   workspace_docs.py check [--json]            validate the library; exit 1 on any FAIL
-  workspace_docs.py status [--fetch]          per-repo staleness (HEAD date vs doc verified), missing/orphan docs;
-                                              --fetch compares the upstream branch instead of the local checkout
+  workspace_docs.py status [--fetch]          per-repo staleness: commits on the default branch (origin/HEAD, else
+                                              origin/main|master|develop) since the baseline commit, missing/orphan docs;
+                                              --fetch runs `git fetch` first. The local checkout is never used.
+  workspace_docs.py changes [--fetch] [--repos a,b] [--json]
+                                              what changed on each repo's default branch since its baseline: commits,
+                                              files, CORE changes (manifests, runtime, CI, Docker, agent docs, top-level
+                                              and module layout, renames, default branch/remote), chunks that cite a
+                                              changed path, and backticked paths in its service chunks that no longer exist
+  workspace_docs.py baseline [--set] [--repos a,b]
+                                              show, or record after a refresh, the default-branch commit each repo's docs
+                                              were verified against (docs/baseline.json)
   workspace_docs.py find <words...> [-n N]    rank chunks for a question (frontmatter weighted); prints path + summary
   workspace_docs.py audit <backup.tgz>        no-content-loss check after align/refresh: backticked identifiers of
                                               the backup that no longer appear anywhere in CLAUDE.md + docs/
@@ -172,20 +181,102 @@ def cmd_check(root, a):
     return 1 if fails else 0
 
 
+# ---------------------------------------------------------------- default branch and baseline
+BASELINE = "docs/baseline.json"
+MANIFESTS = ("package.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "go.mod", "Cargo.toml",
+             "Gemfile", "composer.json", *LOCK_FILES)
+CORE_RULES = (  # (label, predicate on a repo-relative path); first match wins
+    ("agent docs", lambda p: p in AGENT_FILES or p.startswith((".claude/", ".cursor/", ".github/copilot"))),
+    ("runtime version", lambda p: p in VERSION_FILES),
+    ("manifest", lambda p: p.rsplit("/", 1)[-1] in MANIFESTS and p.count("/") <= 2),
+    ("ci", lambda p: any(p == f or p.startswith(f + "/") for f in CI_FILES)),
+    ("docker/deploy", lambda p: re.search(r"(^|/)(Dockerfile[^/]*|docker-compose[^/]*\.ya?ml|helm/.*|\.dockerignore)$", p)),
+    ("build/tooling", lambda p: p in ("Makefile", "tsconfig.json", ".npmrc", ".yarnrc.yml", "CODEOWNERS", ".github/CODEOWNERS")
+        or re.match(r"(eslint|vite|vitest|jest|babel|webpack|next|tsconfig)[^/]*\.(c?js|mjs|ts|json)$", p)),
+    ("migrations", lambda p: re.match(r"(.+/)?migrations?/", p)),
+    ("config", lambda p: p.startswith("config/")),
+    ("readme/docs", lambda p: p.rsplit("/", 1)[-1].upper().startswith("README") or p.startswith(("docs/", "guidelines/"))),
+)
+
+
+def default_ref(repo):
+    """origin's default branch as a ref (origin/HEAD, else origin/main|master|develop|trunk); '' if none."""
+    head = git(repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if head:
+        return head
+    for b in ("main", "master", "develop", "trunk"):
+        if git(repo, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{b}"):
+            return f"origin/{b}"
+    return ""
+
+
+def load_baseline(root):
+    p = root / BASELINE
+    try:
+        return json.loads(p.read_text()) if p.is_file() else {}
+    except ValueError:
+        raise SystemExit(f"{BASELINE} is not valid JSON; fix or delete it")
+
+
+def fetch_all(root, names=None):
+    for r in repos(root):
+        if not names or r.name in names:
+            git(r, "fetch", "--quiet", "--prune", "origin")
+
+
+def repo_filter(a):
+    return {n.strip() for n in (getattr(a, "repos", None) or "").split(",") if n.strip()}
+
+
+def cmd_baseline(root, a):
+    base, names = load_baseline(root), repo_filter(a)
+    if a.set:
+        for r in repos(root):
+            if names and r.name not in names:
+                continue
+            ref = default_ref(r)
+            if not ref:
+                print(f"{r.name}: no origin default branch, skipped"); continue
+            base[r.name] = {"remote": git(r, "remote", "get-url", "origin"), "branch": ref.split("/", 1)[1],
+                            "commit": git(r, "rev-parse", ref), "date": git(r, "log", "-1", "--format=%cs", ref),
+                            "recorded": TODAY}
+        for gone in [n for n in base if not (root / n / ".git").exists()]:
+            del base[gone]
+        (root / BASELINE).write_text(json.dumps(dict(sorted(base.items())), indent=1) + "\n")
+        print(f"wrote {BASELINE} ({len(base)} repos)")
+    for n, b in sorted(base.items()):
+        if not names or n in names:
+            print(f"{n:40} {b['branch']:8} {b['commit'][:10]} {b['date']}  recorded {b['recorded']}")
+    return 0
+
+
 # ---------------------------------------------------------------- status
 def cmd_status(root, a):
-    svc = root / "docs/services"
-    print(f"{'repo':40} {'HEAD':10} {'verified':10} state" + ("   (HEAD = upstream after fetch)" if a.fetch else ""))
+    svc, base = root / "docs/services", load_baseline(root)
+    if a.fetch:
+        fetch_all(root)
+    print(f"{'repo':40} {'default':16} {'HEAD':10} {'verified':10} state")
     for r in repos(root):
-        if a.fetch:
-            git(r, "fetch", "--quiet")
-        head = (a.fetch and git(r, "log", "-1", "--format=%cs", "@{upstream}")) or git(r, "log", "-1", "--format=%cs")
+        ref = default_ref(r)
+        head = git(r, "log", "-1", "--format=%cs", ref) if ref else ""
         docs_for = list(svc.glob(f"{r.name}.md")) + list(svc.glob(f"{r.name}--*.md"))
         dates = [(frontmatter(d)[0] or {}).get("verified", "") for d in docs_for]
         ver = min((d for d in dates if d), default="")
-        state = "MISSING DOC" if not docs_for else ("stale" if head and ver and head > ver else "ok" if ver else "no verified")
-        branch = git(r, "rev-parse", "--abbrev-ref", "HEAD")
-        print(f"{r.name:40} {head:10} {ver:10} {state}{'' if branch in ('main', 'master', 'develop', 'dev', 'trunk') else f'  (on {branch})'}")
+        b = base.get(r.name)
+        if not docs_for:
+            state = "MISSING DOC"
+        elif not ref:
+            state = "no origin default branch"
+        elif b and not git(r, "rev-parse", "--verify", "--quiet", b["commit"] + "^{commit}"):
+            state = "baseline commit not found (history rewritten?): full re-check"
+        elif b:
+            n = git(r, "rev-list", "--count", f"{b['commit']}..{ref}")
+            state = "ok" if n == "0" else f"stale ({n} commits since baseline)"
+            if b.get("branch") and b["branch"] != ref.split("/", 1)[1]:
+                state += f"  CORE: default branch {b['branch']} -> {ref.split('/', 1)[1]}"
+        else:
+            state = ("stale" if head and ver and head > ver else "ok" if ver else "no verified") + "  (no baseline: run baseline --set after refresh)"
+        print(f"{r.name:40} {ref:16} {head:10} {ver:10} {state}")
     for c in svc.glob("*.md"):
         if c.name != "README.md" and not (root / service_repo(c) / ".git").exists():
             print(f"{c.name:40} {'':10} {'':10} ORPHAN DOC (repo gone)")
@@ -193,6 +284,125 @@ def cmd_status(root, a):
     print("largest chunks:", ", ".join(f"{p} {s}B" for s, p in big))
     fails = run_checks(root)
     print(f"check: {'OK' if not fails else f'{len(fails)} FAIL (run check)'}")
+    return 0
+
+
+# ---------------------------------------------------------------- changes
+PATH_TOKEN = re.compile(r"`([A-Za-z0-9_.@-]+(?:/[A-Za-z0-9_.@\[\]-]+)+/?)(?::\d[\d,-]*)?`")
+
+
+def layout(repo, ref, depth):
+    """Directory set of `ref` down to `depth` levels (module layout), ignoring dot-dirs below the top level."""
+    out = set()
+    for line in git(repo, "ls-tree", "-r", "-d", "--name-only", ref).splitlines():
+        parts = line.split("/")
+        if len(parts) <= depth and not any(p.startswith(".") for p in parts[1:]):
+            out.add(line)
+    return out
+
+
+def repo_changes(root, r, base, texts):
+    ref = default_ref(r)
+    b = base.get(r.name)
+    res = {"repo": r.name, "ref": ref, "head": git(r, "rev-parse", "--short", ref) if ref else "", "core": {}}
+    if not ref:
+        res["error"] = "no origin default branch"; return res
+    if b and b.get("remote") and b["remote"] != git(r, "remote", "get-url", "origin"):
+        res["core"]["remote"] = [f"{b['remote']} -> {git(r, 'remote', 'get-url', 'origin')}"]
+    if b and b.get("branch") and b["branch"] != ref.split("/", 1)[1]:
+        res["core"]["default branch"] = [f"{b['branch']} -> {ref.split('/', 1)[1]}"]
+    if not b or not git(r, "rev-parse", "--verify", "--quiet", b["commit"] + "^{commit}"):
+        res["error"] = "no usable baseline: re-verify the whole repo, then baseline --set"
+        return res
+    rng = f"{b['commit']}..{ref}"
+    res["base"] = b["commit"][:10]
+    res["commits"] = git(r, "log", "--no-merges", "--format=%h %cs %s", rng).splitlines()
+    status = [l.split("\t") for l in git(r, "diff", "-M", "--name-status", b["commit"], ref).splitlines() if l]
+    res["files"] = len(status)
+    changed = []
+    for st in status:
+        kind, paths = st[0][0], st[1:]
+        changed += paths
+        if kind == "R":
+            res["core"].setdefault("renamed", []).append(f"{paths[0]} -> {paths[1]}")
+        for p in paths:
+            for label, pred in CORE_RULES:
+                if pred(p):
+                    res["core"].setdefault(label, []).append(f"{kind} {p}")
+                    break
+    old_l, new_l = layout(r, b["commit"], 2), layout(r, ref, 2)
+    if old_l != new_l:
+        res["core"]["layout"] = [f"+ {d}/" for d in sorted(new_l - old_l)] + [f"- {d}/" for d in sorted(old_l - new_l)]
+    # chunks that cite a changed path (full repo-relative path, or a file name of 8+ chars)
+    cited = {}
+    for p in set(changed):
+        name = p.rsplit("/", 1)[-1]
+        for path, text in texts.items():
+            if f"`{p}" in text or (len(name) >= 8 and f"{name}`" in text and r.name in text):
+                cited.setdefault(path, set()).add(p)
+    res["chunks_citing_changed"] = {k: sorted(v)[:8] for k, v in sorted(cited.items())}
+    # backticked paths in this repo's service chunks that do not exist on the default branch any more
+    # a token counts as a path when it names a file (has an extension) or a dir (trailing slash); docs may
+    # abbreviate paths (relative to src/ or a module), so any tree entry ending with it is a match
+    entries = ["/" + p for p in git(r, "ls-tree", "-r", "--name-only", ref).splitlines()]
+    entries += ["/" + d + "/" for d in layout(r, ref, 99)]
+    blob = "\n".join(entries) + "\n"
+    missing = {}
+    for c in sorted((root / "docs/services").glob(f"{r.name}*.md")):
+        if service_repo(c) != r.name:
+            continue
+        for tok in set(PATH_TOKEN.findall(c.read_text(errors="replace"))):
+            t = tok.removeprefix(f"{r.name}/").removeprefix("./")
+            is_dir, is_file = t.endswith("/"), re.search(r"\.[A-Za-z]{1,5}$", t)
+            if not (is_dir or is_file) or t.startswith(("docs/", "http", "@", "~", "origin/")) or "…" in t:
+                continue
+            if ("/" + t + ("" if is_dir else "\n")) not in blob:
+                missing.setdefault(rel(root, c), []).append(t)
+    if missing:  # generated / local-only files are gitignored on purpose: not stale
+        flat = sorted({t for v in missing.values() for t in v})
+        try:
+            ign = set(subprocess.run(["git", "-C", str(r), "check-ignore", "--no-index", "--stdin"], input="\n".join(
+                t.rstrip("/") + ("/x" if t.endswith("/") else "") for t in flat), capture_output=True, text=True,
+                timeout=15).stdout.split())
+        except Exception:
+            ign = set()
+        missing = {k: [t for t in v if (t.rstrip("/") + ("/x" if t.endswith("/") else "")) not in ign]
+                   for k, v in missing.items()}
+        missing = {k: v for k, v in missing.items() if v}
+    res["stale_paths_in_docs"] = {k: sorted(v) for k, v in missing.items()}
+    return res
+
+
+def cmd_changes(root, a):
+    names = repo_filter(a)
+    if a.fetch:
+        fetch_all(root, names)
+    base = load_baseline(root)
+    texts = {rel(root, c): c.read_text(errors="replace") for c in chunks(root)}
+    claude = root / "CLAUDE.md"
+    if claude.is_file():
+        texts["CLAUDE.md"] = claude.read_text()
+    out = [repo_changes(root, r, base, texts) for r in repos(root) if not names or r.name in names]
+    for n in sorted(set(base) - {r.name for r in repos(root)}):
+        out.append({"repo": n, "error": "REPO GONE: run remove-repo"})
+    if a.json:
+        print(json.dumps(out, indent=1)); return 0
+    for res in out:
+        print(f"\n## {res['repo']}  {res.get('ref', '')} {res.get('base', '?')}..{res.get('head', '')}")
+        if res.get("error"):
+            print("  !", res["error"])
+        if "commits" in res:
+            print(f"  {len(res['commits'])} commits, {res['files']} files" + ("" if res["commits"] else "  (unchanged)"))
+            for c in res["commits"][:25]:
+                print("   ", c)
+            if len(res["commits"]) > 25:
+                print(f"    … {len(res['commits']) - 25} more")
+        for label, items in res.get("core", {}).items():
+            print(f"  CORE {label}: " + "; ".join(items[:12]) + (f" … +{len(items) - 12}" if len(items) > 12 else ""))
+        for path, files in res.get("chunks_citing_changed", {}).items():
+            print(f"  cites changed: {path}: " + ", ".join(files))
+        for path, toks in res.get("stale_paths_in_docs", {}).items():
+            print(f"  STALE PATH in {path}: " + ", ".join(toks))
     return 0
 
 
@@ -379,7 +589,10 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("inventory")
     c = sub.add_parser("check"); c.add_argument("--json", action="store_true")
-    st = sub.add_parser("status"); st.add_argument("--fetch", action="store_true", help="git fetch each repo and compare upstream HEAD")
+    st = sub.add_parser("status"); st.add_argument("--fetch", action="store_true", help="git fetch each repo first")
+    ch = sub.add_parser("changes"); ch.add_argument("--fetch", action="store_true"); ch.add_argument("--repos")
+    ch.add_argument("--json", action="store_true")
+    bl = sub.add_parser("baseline"); bl.add_argument("--set", action="store_true"); bl.add_argument("--repos")
     f = sub.add_parser("find"); f.add_argument("words", nargs="+"); f.add_argument("-n", type=int, default=5)
     au = sub.add_parser("audit"); au.add_argument("backup", help="docs-backup-*.tgz made before align/refresh")
     s = sub.add_parser("scaffold"); s.add_argument("kind", choices=sorted(STUBS)); s.add_argument("name")
@@ -388,7 +601,8 @@ def main():
     l.add_argument("--title"); l.add_argument("--why"); l.add_argument("--tags"); l.add_argument("--pin", action="store_true")
     a = p.parse_args()
     root = root_dir(a.root)
-    return {"inventory": cmd_inventory, "check": cmd_check, "status": cmd_status, "find": cmd_find, "audit": cmd_audit,
+    return {"inventory": cmd_inventory, "check": cmd_check, "status": cmd_status, "changes": cmd_changes,
+            "baseline": cmd_baseline, "find": cmd_find, "audit": cmd_audit,
             "scaffold": cmd_scaffold, "link": cmd_link}[a.cmd](root, a)
 
 
