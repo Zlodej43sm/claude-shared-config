@@ -49,7 +49,13 @@ JIRA_KEYS = (
 )
 JIRA_CREDENTIAL_KEYS = ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")  # optional: else atlassian-oauth
 ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
-SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL", re.I)
+# Secret-looking env var names: kept out of settings.local.json here and out of MCP child envs
+# by tools/mcp-run.py. Anchored parts avoid non-secrets such as SSH_AUTH_SOCK or TERM_SESSION_ID.
+SECRET_NAME = re.compile(
+    r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL|WEBHOOK|COOKIE"
+    r"|(^|_)KEY$|(^|_)PASS(PHRASE)?($|_)|(^|_)(AUTH|SESSION)$|(^|_)DSN($|_)",
+    re.I,
+)
 # Registered as `apiKeyHelper` next to the env var: Claude Code asks once whether to use an
 # env-provided key and remembers a "No" per key (customApiKeyResponses.rejected in
 # ~/.claude.json), silently falling back to the claude.ai login. A helper has no prompt.
@@ -269,11 +275,27 @@ def export_to_session(env: dict[str, str]) -> None:
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and not v.startswith("op://")
     ]
     try:
-        with open(target, "a", encoding="utf-8") as fh:
+        # 0600 from creation (and before writing to an existing file): never readable by others
+        fd = os.open(target, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
-        os.chmod(target, 0o600)
     except OSError as exc:
         warn(f"could not write CLAUDE_ENV_FILE ({exc}); keys apply from the next session")
+
+
+def write_private(path: Path, text: str) -> None:
+    """Replace `path` atomically with a file that is 0600 from creation."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_EXCL, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def secret_keys(raw_env: dict[str, str]) -> set[str]:
@@ -374,8 +396,7 @@ def main() -> int:
         return 0
 
     settings["env"] = merged
-    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    os.chmod(settings_path, 0o600)
+    write_private(settings_path, json.dumps(settings, indent=2) + "\n")
     if env_changed:
         warn(f"synced {len(persisted)} non-secret vars from .claude/.env into settings.local.json "
              "(secrets go to this session only)")

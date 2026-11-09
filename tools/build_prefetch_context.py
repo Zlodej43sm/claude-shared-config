@@ -16,7 +16,7 @@ SCHEMA_IN
   Reads  $PR_REVIEW_CACHE_DIR/jira_{KEY}.json     — ticket data (all, skipping remotelinks files)
          $PR_REVIEW_CACHE_DIR/conf_{PAGE_ID}.json — Confluence pages
          $PR_REVIEW_CACHE_DIR/link_registry.json  — via-map (key: "jira:KEY"|"conf:ID", value: via)
-  env    JIRA_BASE_URL  (for constructing Confluence page URLs)
+  env    CONFLUENCE_BASE_URL, else JIRA_BASE_URL + /wiki  (for constructing Confluence page URLs)
          PR_REVIEW_CACHE_DIR (required — per-invocation cache dir, see pr-review SKILL.md Step 0)
 
 SCHEMA_OUT  stdout
@@ -57,6 +57,7 @@ if not cache_dir:
     sys.exit(2)
 
 jira_base = os.environ.get("JIRA_BASE_URL", "").rstrip("/")
+conf_base = (os.environ.get("CONFLUENCE_BASE_URL") or jira_base + "/wiki").rstrip("/")
 
 # ── Load via-map ──────────────────────────────────────────────────────────────
 
@@ -229,7 +230,7 @@ if conf_files:
         body    = d.get("body", {}).get("export_view", {}).get("value", "")
         ptype   = classify_page(title, strip_html(body[:500]))
         page_via = via(f"conf:{pid}")
-        url     = f"{jira_base}/wiki/spaces/{d.get('space',{}).get('key','')}/pages/{pid}"
+        url     = f"{conf_base}/spaces/{d.get('space',{}).get('key','')}/pages/{pid}"
         lines.append(f"| {pid} | {title} | {ptype} | {page_via} | {url} |")
     lines.append("")
 
@@ -250,7 +251,7 @@ if conf_files:
         lines.append(f"CONFLUENCE: {title} [{ptype}] [via {page_via}]")
         lines.append(plain)
         if len(plain) >= 6000:
-            url = f"{jira_base}/wiki/spaces/{d.get('space',{}).get('key','')}/pages/{pid}"
+            url = f"{conf_base}/spaces/{d.get('space',{}).get('key','')}/pages/{pid}"
             lines.append(f"<truncated — full page at {url}>")
         lines.append("")
         signal_texts.append((plain, f"conf:{pid}"))

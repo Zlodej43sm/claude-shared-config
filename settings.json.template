@@ -22,12 +22,33 @@
       "Bash(gh pr list:*)",
       "Bash(gh pr diff:*)",
       "Bash(gh pr checks:*)",
-      "Bash(gh auth status:*)",
+      "Bash(gh auth status)",
       "Bash(.claude/tools/*)",
       "Bash(python3 .claude/tools/*)",
+      "Bash(python3 -I .claude/tools/*)",
       "Bash(bash .claude/tools/*)",
-      "Bash(python3 \"$PROJECT_ROOT/.claude/tools/*)",
       "Bash(python3 \"$CLAUDE_PROJECT_DIR/.claude/tools/*)"
+    ],
+    "ask": [
+      "Bash(*bb_post_comment.sh*)",
+      "Bash(*gh_post_comment.sh*)",
+      "Bash(*jira_create_child.sh*)",
+      "Bash(*mcp-run.py*)",
+      "Bash(*workspace_docs.py* sync*)",
+      "Read(.env)",
+      "Read(./.claude/settings.local.json)"
+    ],
+    "deny": [
+      "Bash(*.claude/tools/..*)",
+      "Bash(git * --output*)",
+      "Bash(git grep *-O*)",
+      "Bash(git grep *--open-files-in-pager*)",
+      "Bash(git fetch *--upload-pack*)",
+      "Bash(gh auth *--show-token*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.netrc)"
     ]
   },
   "hooks": {

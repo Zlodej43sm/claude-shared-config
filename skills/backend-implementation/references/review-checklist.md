@@ -41,8 +41,9 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - A date or threshold rule tested on each side of the boundary, with constants named by their side?
 
 ## 5. Naming
-- Scenario titles: `Should <verb> <object> when <condition as the caller sees it>`, naming the asserted fields, "stored" not "existing"?
-- Unit tests: `should <exact outcome> when <collaborator/condition>`, no "fail"/"wrap"/"handle"?
+- Each new or renamed test and scenario title copies the form of the titles already in its file (then sibling files, then the repo's most common form)? `Should …` / `should …` only where there is nothing to copy (test-design Step 3).
+- Scenario titles name the condition as the caller sees it and the asserted fields, "stored" not "existing"?
+- Unit test titles name the exact outcome and the collaborator, no "fail"/"wrap"/"handle"?
 - Function names state everything the function does; provider/model/handler names follow the project's forms?
 - Every new column/field name grepped against the repo: same word and pair as the existing concept (`valid_from`/`valid_to`), no new synonym, same boundary semantics (exclusive end)?
 - After a rename in review: the old word grepped across all stacked PRs (fields, files, functions, types, constants, log prefixes), only a third party's own keys left?

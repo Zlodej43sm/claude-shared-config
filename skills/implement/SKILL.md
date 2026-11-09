@@ -83,10 +83,10 @@ The subagent writes the plan file and returns `PLAN_PATH: <path>` followed by th
 
 ## Step 2b — Verify the plan with fresh eyes
 
-Spawn one `general-purpose` agent. Give it the plan path, the target repos and the planning standard, but not the planner's reasoning:
+Spawn one `Explore` agent (read-only: no Edit or Write; it still runs the git commands below). Give it the plan path, the target repos and the planning standard, but not the planner's reasoning:
 
 ```
-Verify this implementation plan against the code. Check every fact, file path, line reference, command and version it cites on the branch the plan says it targets (git fetch, then git show origin/<branch>:<path> or git grep), not the working tree. Check that every acceptance criterion maps to a task and a test, that the tests follow the test rules the plan cites, and that each deviation from the ticket has a reason. Return one finding per line: claim, verdict (wrong / unverified / missing / risky), evidence, proposed fix. Do not edit files.
+Verify this implementation plan against the code. Check every fact, file path, line reference, command and version it cites on the branch the plan says it targets (git fetch, then git show origin/<branch>:<path> or git grep), not the working tree. Check that every acceptance criterion maps to a task and a test, that the tests follow the test rules the plan cites, and that each deviation from the ticket has a reason. For a cited command, check it exists in the Makefile, package.json scripts or CI config; never run it. Return one finding per line: claim, verdict (wrong / unverified / missing / risky), evidence, proposed fix. Do not edit files.
 ```
 
 Apply each finding you confirm by editing the plan; reject one only with evidence. Add a line to the plan's review log: what was checked and what changed. Then continue with Step 3.

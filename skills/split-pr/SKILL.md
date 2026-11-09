@@ -144,7 +144,7 @@ Tell the user the file path. Do not also paste the entire plan into chat if it's
 
 ## Step 7 — Adversarial self-critique (self-improvement — runs every time, not only on complaint)
 
-Put the draft plan on trial before showing it to the user, instead of waiting for them to catch a mistake. Spawn 2-3 independent critic agents in parallel via the `Agent` tool (fresh/general-purpose, **not** forks — they must not inherit your synthesis reasoning or they'll just agree with it). Give each critic only: the draft plan file's contents, the diff range (`BASE_REF...HEAD_REF`), the combined lessons text from Step 0, and Step 2's import-graph JSON. Instruct each to try to REFUTE the plan, specifically checking:
+Put the draft plan on trial before showing it to the user, instead of waiting for them to catch a mistake. Spawn 2-3 independent critic agents in parallel via the `Agent` tool (`subagent_type: "Explore"`: read-only, no Edit or Write, and fresh, **not** forks — they must not inherit your synthesis reasoning or they'll just agree with it). Give each critic only: the draft plan file's contents, the diff range (`BASE_REF...HEAD_REF`), the combined lessons text from Step 0, and Step 2's import-graph JSON. Instruct each to try to REFUTE the plan, specifically checking:
 
 - Does every edge cited in "Verdict on any split the user proposed" and the "Tracks" table actually appear in the import-graph JSON or a hunk a classification agent reported — not just asserted?
 - Is any file assigned wholly to one concern/track when its actual diff contains hunks from 2+ concerns?

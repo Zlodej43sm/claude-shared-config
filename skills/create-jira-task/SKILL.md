@@ -49,20 +49,19 @@ Reuse this `$REPORTER` value for every item in Step 2 — never re-fetch per ite
 
 ## Step 2 — Create each item
 
-For every `{summary, description}` item, write the text to files with quoted heredocs (the text is often drafted from tickets, pages or PRs; in a double-quoted `--summary="…"` its backticks and `$(…)` would run), then call the tool script:
+Text is often drafted from tickets, pages or PRs, so it never goes through the shell: not in a double-quoted `--summary="…"` (its backticks and `$(…)` would run) and not in a heredoc (a line equal to the delimiter ends it and the rest runs as shell). Create a work directory once for the whole batch and note the path it prints:
 
 ```bash
-WORK_DIR=$(mktemp -d)   # once, for the whole batch
-cat > "$WORK_DIR/summary.txt" <<'SUMMARY_EOF'
-<summary>
-SUMMARY_EOF
-cat > "$WORK_DIR/description.txt" <<'DESCRIPTION_EOF'
-<description>
-DESCRIPTION_EOF
+WORK_DIR=$(mktemp -d) && echo "$WORK_DIR"
+```
 
+For every `{summary, description}` item `<i>` (1, 2, …), write `<WORK_DIR>/summary-<i>.txt` and `<WORK_DIR>/description-<i>.txt` with the Write tool, using the literal path printed above (shell variables don't survive between commands). Then call the tool script:
+
+```bash
+WORK_DIR="<path printed above>"
 .claude/tools/jira_create_child.sh \
-  --summary-file="$WORK_DIR/summary.txt" \
-  --description-file="$WORK_DIR/description.txt" \
+  --summary-file="$WORK_DIR/summary-<i>.txt" \
+  --description-file="$WORK_DIR/description-<i>.txt" \
   --parent="<PARENT, or omit entirely>" \
   --issuetype="<ISSUETYPE, default Task>" \
   --project="<PROJECT, default $JIRA_WORKSPACE>" \
@@ -78,6 +77,8 @@ Run items **sequentially, not in parallel** (avoid bursting the Jira API), with 
 ## Step 3 — Report
 
 Print one line per item (`OK <key> <summary>` / `FAIL <summary>: <reason>`) plus a final count, e.g. `Created 9/9 issues under TASK-123.` Surface every failure with its reason so the user can retry just those.
+
+Then remove the work directory: `rm -rf "<path printed above>"`.
 
 ## Constraints
 

@@ -136,10 +136,10 @@ SCOPED_IMPORT_RE = re.compile(
 ) if PACKAGE_SCOPE else None
 
 # Matches `import`/`export` ... `from './relative'` or `'../relative'` — used to
-# catch INTRA-package ordering constraints (see below): this repo builds each
-# package as one `tsc -b` unit, so a relative import between two files that are
-# both changed in this diff can force one to land before the other even though
-# they're in the same @<scope>/* package and never show up as a cross-package edge.
+# catch INTRA-package ordering constraints (see below): in a `tsc -b`-per-package
+# workspace each package builds as one unit, so a relative import between two files
+# that are both changed in this diff can force one to land before the other even
+# though they're in the same @<scope>/* package and never show up as a cross-package edge.
 RELATIVE_IMPORT_RE = re.compile(
     r"(import|export)\s+(type\s+)?"
     r"(?:\{([^}]*)\}|([A-Za-z_$][\w$]*))"
@@ -203,7 +203,7 @@ for f in changed_files:
             continue
         target_m = PKG_RE.match(target_path)
         if not target_m or target_m.group(1) != from_package:
-            continue  # only intra-PACKAGE edges belong here; cross-package relative imports don't exist in this workspace
+            continue  # only intra-PACKAGE edges belong here; cross-package relative imports are not expected in a scoped-package workspace
         specifiers = parse_specifiers(named, default)
         intra_package_edges.append({
             "file": f["path"],

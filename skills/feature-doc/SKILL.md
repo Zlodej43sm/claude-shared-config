@@ -11,7 +11,7 @@ You are the entry point for generating a feature documentation file. Your job is
 
 - Empty — auto-detect everything from the current branch.
 - A Jira ticket key — `$JIRA_WORKSPACE-13` or bare `13`. Overrides the key parsed from the branch name.
-- An output path — any argument containing `/` or ending in `.md` is treated as the output path.
+- An output path — any argument containing `/` or ending in `.md` is treated as the output path (allowed locations: Step 1).
 - Both — `$JIRA_WORKSPACE-13 docs/my-feature.md` (key first, path second).
 
 ## Step 0 — Load env
@@ -37,7 +37,7 @@ If the user supplied a key in `args`, use that instead. If neither source yields
 
 Determine the output path:
 
-- If the user gave an explicit path, use it.
+- If the user gave an explicit path, use it only when it is repo-relative, stays inside the repo and is not under `.claude/` (e.g. `docs/my-feature.md`). For anything else (an absolute path, a `..` segment, a `.claude/…` path) show the resolved path and ask the user to confirm before writing.
 - Otherwise default to `docs/features/<ticket-key-lowercase>-<branch-slug>.md` where `branch-slug` is the branch name with `/` replaced by `-`, lowercased, with the leading `feat-` or `fix-` stripped. Example: `feat/$JIRA_WORKSPACE-13-avro-schema` → `docs/features/$JIRA_WORKSPACE-13-avro-schema.md` (lowercased at write time).
 
 ## Step 2 — Fetch the Jira ticket

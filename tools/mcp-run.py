@@ -30,9 +30,10 @@ variables whose expanded value is empty are not exported at all, so
 
 The server gets only the credentials it asks for: the inherited environment is
 passed on without every key defined in .claude/.env and without any variable with
-a secret-looking name (*TOKEN*, *SECRET*, *PASSWORD*, *API_KEY*, ...), then the
---env pairs are added. A server started with `npx`/`uvx` runs on the host, and
-its dependencies resolve fresh on every start.
+a secret-looking name (*TOKEN*, *SECRET*, *PASSWORD*, *_KEY, ...: SECRET_NAME in
+hooks/sync-env.py), then the --env pairs are added. A server started with `npx`/`uvx` runs
+on the host and resolves its dependencies at start; mcp.json.template pins that resolution to
+a date (`--exclude-newer` / `--before`).
 
 Project dir: the cwd (Claude Code starts stdio servers there), else
 $CLAUDE_PROJECT_DIR.
@@ -48,7 +49,6 @@ import sys
 from pathlib import Path
 
 PLACEHOLDER = re.compile(r"\{\{([A-Za-z0-9_]+)(?:\|([^}]*))?\}\}")
-SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL", re.I)
 
 
 def load_sync_env():
@@ -57,6 +57,7 @@ def load_sync_env():
     path = Path(__file__).resolve().parent.parent / "hooks" / "sync-env.py"
     spec = importlib.util.spec_from_file_location("sync_env", path)
     module = importlib.util.module_from_spec(spec)
+    sys.dont_write_bytecode = True  # no __pycache__ in the shared hooks/ directory
     spec.loader.exec_module(module)
     return module
 
@@ -135,7 +136,7 @@ def main(argv: list[str]) -> int:
         return PLACEHOLDER.sub(sub, text)
 
     child_env = {k: v for k, v in os.environ.items()
-                 if k not in file_env and not SECRET_NAME.search(k)}
+                 if k not in file_env and not sync_env.SECRET_NAME.search(k)}
     for name, raw in pairs:
         expanded = expand(raw)
         if expanded:

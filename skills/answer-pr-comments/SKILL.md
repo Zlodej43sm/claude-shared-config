@@ -193,13 +193,7 @@ When you (the main loop, not the agent) fix code in response to a reviewer comme
     fi
     ```
 
-2. Show the reply and post it only after the user confirms. Write the text to a file with a quoted heredoc, so the shell expands nothing in it (replies often quote code or the reviewer), then pass the file:
-
-    ```bash
-    cat > "$CACHE_DIR/reply.md" <<'REPLY_EOF'
-    <reply text>
-    REPLY_EOF
-    ```
+2. Show the reply and post it only after the user confirms. Write the text to `reply.md` in the Step 0 cache directory (its absolute path) with the Write tool, never through the shell: replies often quote code or the reviewer, and a line equal to a heredoc's delimiter would end the heredoc and run the rest as shell. Then pass the file:
 
     - **Bitbucket** — a threaded reply under the original:
         ```bash

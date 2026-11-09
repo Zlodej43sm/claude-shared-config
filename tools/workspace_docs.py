@@ -9,7 +9,8 @@ The skill does the judgment (reading code, writing facts); this script does
 the deterministic parts: inventory, validation, staleness, retrieval,
 scaffolding new chunks and maintaining the links registry.
 
-USAGE (root = --root, else $CLAUDE_PROJECT_DIR, else cwd)
+USAGE (root = --root, else $CLAUDE_PROJECT_DIR, else cwd). Without --root, the writing commands (scaffold,
+link add/remove, baseline --set) refuse a root that is itself a git repo or is the shared Claude config repo.
   workspace_docs.py inventory                 JSON: repos (remote, branch, HEAD, version/lock/CI/agent files),
                                               non-repo entries, existing chunks (size, verified)
   workspace_docs.py check [--json]            validate the library; exit 1 on any FAIL
@@ -59,6 +60,20 @@ TODAY = datetime.date.today().isoformat()
 
 def root_dir(arg):
     return Path(arg or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
+
+
+def unsafe_root(root):
+    """Why an implicit root must not be written to, or None. A workspace root holds repos; it is not one."""
+    if (root / ".git").exists():
+        return "it is itself a git repo"
+    if (root / "bin/link-project.sh").is_file() and (root / "skills").is_dir():
+        return "it is the shared Claude config repo"
+    return None
+
+
+def writes(a):
+    """True for the subcommands that write docs/ or CLAUDE.md."""
+    return a.cmd == "scaffold" or (a.cmd == "link" and a.action != "list") or (a.cmd == "baseline" and a.set)
 
 
 def git(repo, *args):
@@ -536,9 +551,15 @@ def append_table_row(index, row):
     index.write_text("\n".join(lines) + "\n")
 
 
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*(--[A-Za-z0-9][A-Za-z0-9_.-]*)?$")
+
+
 def cmd_scaffold(root, a):
     path_t, body_t = STUBS[a.kind]
     name = a.name.removesuffix(".md")
+    if not NAME_RE.match(name) or ".." in name:
+        print(f"refusing: invalid name {a.name!r} (letters, digits, _ . -, optional <repo>--<part>; no / or ..)",
+              file=sys.stderr); return 2
     title = a.title or name.replace("-", " ").capitalize()
     section = ""
     lookups_idx = root / "docs/lookups.md"
@@ -546,6 +567,8 @@ def cmd_scaffold(root, a):
         nums = [int(n) for n in re.findall(r"^\|\s*(\d+)\s*\|", lookups_idx.read_text(), re.M)]
         section = str(max(nums, default=0) + 1)
     path = root / path_t.format(name=name)
+    if not path.resolve().is_relative_to((root / "docs").resolve()):
+        print(f"refusing: {path} resolves outside {root / 'docs'}", file=sys.stderr); return 2
     if path.exists():
         print(f"exists: {rel(root, path)}"); return 1
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -657,6 +680,11 @@ def main():
     l.add_argument("--title"); l.add_argument("--why"); l.add_argument("--tags"); l.add_argument("--pin", action="store_true")
     a = p.parse_args()
     root = root_dir(a.root)
+    why = None if a.root else unsafe_root(root)
+    if why and writes(a):
+        print(f"refusing to write to {root}: {why}. Run from the workspace root (the folder holding the repos) "
+              "or pass --root <workspace-root> explicitly.", file=sys.stderr)
+        return 2
     return {"inventory": cmd_inventory, "check": cmd_check, "status": cmd_status, "sync": cmd_sync, "changes": cmd_changes,
             "baseline": cmd_baseline, "find": cmd_find, "audit": cmd_audit,
             "scaffold": cmd_scaffold, "link": cmd_link}[a.cmd](root, a)

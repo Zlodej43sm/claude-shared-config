@@ -54,6 +54,9 @@ const REPORT_SCHEMA = {
 
 const { baseRef, headRef, groups, lessons, importGraphSummary } = args;
 
+// Refs and paths come from the caller and end up in shell commands the agent runs: single-quote them.
+const sq = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+
 function buildPrompt(g) {
   return `You are analyzing one slice of a large diff in this repo, to help split an oversized PR into smaller, reviewable, dependency-ordered PRs. This is analysis only — you will not edit, commit, or branch anything.
 
@@ -62,8 +65,8 @@ Files/paths in your slice: ${g.paths.join(', ')}
 ${g.hint ? `Context hint for this slice: ${g.hint}` : ''}
 
 Steps:
-1. Run: git diff ${baseRef}...${headRef} --name-status -- ${g.paths.join(' ')}
-2. For every file returned (skip pure renames/copies with an empty diff), read its actual diff: git diff ${baseRef}...${headRef} -- <file>. If a file's diff is very large, read it in slices rather than skipping it.
+1. Run: git diff ${sq(baseRef)}...${sq(headRef)} --name-status -- ${g.paths.map(sq).join(' ')}
+2. For every file returned (skip pure renames/copies with an empty diff), read its actual diff: git diff ${sq(baseRef)}...${sq(headRef)} -- '<file>'. If a file's diff is very large, read it in slices rather than skipping it.
 3. For every changed file, classify each DIFF HUNK — not necessarily the whole file — using the schema below. A file that bundles two unrelated changes (e.g. a mechanical rename plus an unrelated bugfix in the same file) must get two different "concern" labels, one per hunk, not one label for the whole file.
 4. Deleted files, renamed files, and pure comment/doc-link fixes still need a concern label — deletions are frequently the other half of a rewrite happening in a different file.
 5. Note every cross-package import you see in this slice (an import of a symbol from another package in this workspace, e.g. via a scoped import like \`@scope/pkg\`). If that imported symbol is newly added in this same diff (not already on ${baseRef}), that is an ordering constraint: this concern cannot land before the concern that adds that symbol.

@@ -14,7 +14,9 @@ chunk instead of whole repos or stale READMEs.
 - File templates (service, lookup, connection, recipe, root CLAUDE.md): `reference/templates.md`.
 - Mechanical helper (stdlib Python): `.claude/tools/workspace_docs.py` — `inventory`, `check`,
   `status`, `sync`, `changes`, `baseline`, `find`, `audit`, `scaffold`, `link`. Run it as `python3 -I .claude/tools/workspace_docs.py <cmd>`
-  from the workspace root (or pass `--root`). Below it is abbreviated `WSD`.
+  from the workspace root (or pass `--root`). Without `--root`, its writing commands (`scaffold`,
+  `link add`/`remove`, `baseline --set`) refuse a root that is itself a git repo or this shared config
+  repo. Below it is abbreviated `WSD`.
 
 Read both reference files before writing any chunk.
 
@@ -85,6 +87,8 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
    `services/README.md` (per-family tables + "Find by question"), `recipes/README.md`, `links.md`.
 4. **Write chunks** from the templates. New files: `WSD scaffold <kind> <name> --summary … --keywords …`
    creates a stub with frontmatter and registers recipes/lookups in their index; then fill it.
+   `<name>` is a slug: letters, digits, `_`, `.`, `-` (lowercase, except a repo folder name), optional
+   `--<part>` suffix, no `/` or `..`; the tool refuses anything else.
    Pass every value taken from a fetched page or title single-quoted, a `'` inside it written as `'\''`; in double quotes, backticks and `$(…)` in a page title would run.
    `align` on a big root CLAUDE.md: keep §1–§8 as 1–5 lines + pointers, move tables/recipes/change maps
    to `docs/lookups/where-things-live.md`, `docs/lookups/search-recipes.md`, `docs/change-map.md` (split
@@ -139,7 +143,7 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
    `--<topic>` overflow); cross-cutting rule → `topic`. If a chunk on the subject exists, merge instead.
 3. Check every command/path/name it states against the code; mark what you could not verify `(I)`;
    drop secret values.
-4. `WSD scaffold <kind> <slug> --summary … --keywords …` (or edit the existing chunk), fill it with
+4. `WSD scaffold <kind> <slug> --summary … --keywords …` (`<slug>` as in shared step 4; or edit the existing chunk), fill it with
    `Source: <title> (<url>), read <date>`, keep ≤ 4 KB. Add a pointer row where readers will look
    (recipes README / lookups index are automatic; others: `services/README.md`, CLAUDE.md §3/§7,
    Quick navigation). Also `WSD link add <url> --title … --why …` for the source page.
@@ -154,7 +158,7 @@ to review. If `docs/links.md` would pass 4 KB, move one tag group into `docs/lin
 (`WSD scaffold topic links-<tag>` then move the file) and point to it from `docs/links.md`.
 
 ### remove-repo
-Back up; delete `docs/services/<repo>*.md`; remove its rows from `services/README.md`, root CLAUDE.md
+Back up; delete `docs/services/<repo>.md` and `docs/services/<repo>--*.md`; remove its rows from `services/README.md`, root CLAUDE.md
 §2, `commands.md`, `lookups/versions*`; in other lookups/connections replace it with
 `<repo> (removed <date>)` where history matters, else drop the row; `WSD check`.
 

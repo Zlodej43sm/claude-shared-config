@@ -164,6 +164,14 @@ server), then:
   server has no dynamic client registration, so Claude Code would need a pre-registered OAuth
   app. `gh auth login` is the equivalent — one browser sign-in, no key to create or store.
 
+  The `github` server runs read-only (`GITHUB_READ_ONLY=1`); the PR skills post over the
+  REST API (`tools/gh_post_comment.sh`, the `comment-responder` agent). The Docker images
+  are pinned by digest. The `uvx`/`npx` servers pin their package version and resolve its
+  dependencies as of a fixed date
+  (`--exclude-newer` / `--before`), so a dependency published later never gets in; move the
+  date together with the version. The `notion` and `sonarqube` servers can do whatever their
+  token allows, so give those tokens read access only (see `env.example`).
+
   Nothing in the template is project-specific and nothing is generated from a project: each
   stdio server is launched through `tools/mcp-run.py`, which reads the project's `.claude/.env`
   at server start and fills in the `{{KEY}}` (required) / `{{KEY|default}}` (optional)
@@ -194,7 +202,7 @@ server), then:
   | Key | This session's Bash calls | `settings.local.json` `env` (next session on) |
   | --- | --- | --- |
   | Non-secret (`GIT_HOST`, `JIRA_BASE_URL`, …) | yes (`CLAUDE_ENV_FILE`) | yes |
-  | Secret (an `op://` reference, or a name like `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*API_KEY*`) | yes, resolved | never; an earlier synced copy is removed |
+  | Secret (an `op://` reference, or a name matching `SECRET_NAME` in `hooks/sync-env.py`, such as `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*_KEY`, `*_PASS`, `*WEBHOOK*`) | yes, resolved | never; an earlier synced copy is removed |
   | `ANTHROPIC_API_KEY` | yes, resolved | yes, file kept owner-only (mode 600) |
 
   Skills and agents load `.claude/.env` with `eval "$(python3 .claude/tools/env_exports.py)"`,
@@ -216,13 +224,25 @@ server), then:
   `.claude/settings.json` the first time it's linked, the same way as `.mcp.json`
   above. Only generated when no `settings.json` exists yet; once a project has one,
   it's free to diverge (different permissions, extra hooks) and `link-project.sh`
-  will never touch it again. Wires up `sync-env.py` (SessionStart) and
+  will never touch it again. Its permissions auto-allow read-only git/`gh` commands and
+  the `.claude/tools/` scripts, with `ask` and `deny` rules on top (Claude Code checks
+  deny, then ask, then allow, per subcommand):
+
+  | Rule | Covers |
+  | --- | --- |
+  | ask | scripts that post or change something outside the machine (`*_post_comment.sh`, `jira_create_child.sh`), `mcp-run.py` (runs any command), `workspace_docs.py sync` (`git merge`); reading `.env` files and `settings.local.json` |
+  | deny | `..` in a `.claude/tools/` path; git flags that write files or run commands (`--output`, `git grep -O`, `git fetch --upload-pack`); `gh auth --show-token`; `~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.netrc` |
+
+  Since an existing `settings.json` is never regenerated, merge template changes into a
+  project's copy by hand. Wires up `sync-env.py` (SessionStart) and
   `biome-pretooluse.py` (PreToolUse on Write/Edit) — the latter no-ops silently on
   projects without a `node_modules/.bin/biome`, so it's safe as a shared default.
   `biome-pretooluse.py` checks prospective content via a throwaway sibling temp
   file (`.pretooluse-tmp-*`) in the same directory as the file being saved —
   add `**/.pretooluse-tmp-*` to the project's `.gitignore` so it doesn't get
-  picked up by VCS-aware tooling if a crash ever leaves one behind.
+  picked up by VCS-aware tooling if a crash ever leaves one behind. It skips files
+  that resolve into this repo (an edit through the `.claude/skills` symlink), so no
+  temp file lands in the shared tree.
 - `env.example` — template for a project's `.claude/.env`. Secret fields use
   `op://` (1Password) references; see the file header for setup. Includes both
   Bitbucket and GitHub credential blocks — `GIT_HOST` (or `tools/detect_git_host.sh`'s

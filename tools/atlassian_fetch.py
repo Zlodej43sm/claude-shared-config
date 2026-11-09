@@ -342,7 +342,8 @@ def download(url: str, dest: str, max_bytes: int) -> str | None:
             # send the credentials (or the image) in clear text
             if dst.scheme != "https" and not same_origin:
                 return "refused non-https redirect"
-            resp = urllib.request.urlopen(
+            # OPENER, not urlopen: a further cross-origin hop must not inherit Authorization
+            resp = OPENER.open(
                 urllib.request.Request(target, headers={"Authorization": f"Basic {cred}"} if same_origin else {}),
                 timeout=30)
         with resp:
@@ -368,7 +369,9 @@ def cmd_attachments(key: str, directory: str, limit: int) -> dict:
     images, skipped = [], []
     for a in items:
         meta = attachment_meta(a)
-        if meta["mime"] not in IMAGE_MIMES:
+        if not re.fullmatch(r"\d+", meta["id"]):  # the id goes into the output path and the URL
+            skipped.append({"filename": meta["filename"], "reason": f"unexpected attachment id {meta['id']!r}"})
+        elif meta["mime"] not in IMAGE_MIMES:
             skipped.append({"filename": meta["filename"], "reason": f"not a supported image ({meta['mime'] or 'unknown type'})"})
         elif meta["size"] > MAX_IMAGE_BYTES:
             skipped.append({"filename": meta["filename"], "reason": f"larger than {MAX_IMAGE_BYTES // (1024 * 1024)} MB"})

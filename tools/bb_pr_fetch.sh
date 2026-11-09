@@ -23,6 +23,7 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 PR_ID="${1:?ERROR: bb_pr_fetch.sh requires PR_ID as \$1}"
+[[ "$PR_ID" =~ ^[0-9]+$ ]] || { echo "ERROR: PR_ID must be a number" >&2; exit 1; }
 BASE="https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/pullrequests"
 
 TMP_META=$(mktemp)

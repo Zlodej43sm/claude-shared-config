@@ -4,7 +4,8 @@ security_audit_scan — mechanical first pass for the security-audit skill.
 
 --mode=config (default): a Claude Code config tree (skills/agents/tools/hooks/
 workflows + mcp.json + settings.json + their templates + env template; for a
-shared source-of-truth repo also bin/ and README.md). Finds high-confidence
+shared source-of-truth repo also bin/ and README.md; inside those dirs, files git
+ignores and binary files are skipped). Finds high-confidence
 secret shapes, filesystem-write call sites, and declared tool/permission scopes.
 
 --mode=code: an application's source (files git does not ignore when the root is a git
@@ -63,10 +64,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Skipped at any depth.
 SKIP_DIRS = {
-    ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
-    ".idea", ".cache", "plans", "reviews", "worktrees",
+    ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".idea",
 }
+# Claude Code runtime output: skipped only directly under .claude/, so a skills/x/reviews/
+# folder in the config tree is still scanned.
+CLAUDE_RUNTIME_DIRS = {"plans", "reviews", "worktrees", ".cache"}
 SKIP_FILES = {".env", "settings.local.json"}
 SKIP_FILE_SUFFIXES = (".lock", ".log", ".min.js")
 
@@ -142,13 +146,48 @@ SECRET_PATTERNS = [
 PRIVATE_KEY_BLOCK = re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----")
 
 WRITE_CALL_PATTERNS = re.compile(
-    r"\.write_text\(|\bopen\([^)]*[\"']w[ab]?[\"']|fs\.writeFile|fs\.writeFileSync|json\.dump\(|"
+    r"\.write_text\(|\bopen\([^)]*[\"'](?:[wax][bt+]*|r[bt]?\+[bt]?)[\"']|fs\.writeFile|fs\.writeFileSync|json\.dump\(|"
+    r"\bos\.(?:fdopen|open|makedirs)\(|\.mkdir\(|\.extractall\(|\bln\s+-s|"
     r"\bmkdir\s+|\bcp\s+[\"'/$.~-]|git\s+add\b|git\s+commit\b|(?:(?<=\s)|^)>{1,2}\s*[\"'$~./]"
 )
 
 URL_RE = re.compile(r"https?://[^\s\"'<>()\]]+")
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
 LOCAL_PATH_RE = re.compile(r"(?:/Users/[^\s\"'<>()\]]+|/home/[^\s\"'<>()\]]+|C:\\\\Users\\\\[^\s\"'<>()\]]+)")
+
+
+def skipped_dir(parts: tuple[str, ...]) -> bool:
+    if any(part in SKIP_DIRS for part in parts):
+        return True
+    return len(parts) > 2 and parts[0] == ".claude" and parts[1] in CLAUDE_RUNTIME_DIRS
+
+
+def git_ignored(directory: Path, paths: list[Path]) -> set[Path]:
+    """The `paths` (all under `directory`) that git ignores. Empty when `directory`
+    is not in a git work tree or git fails (e.g. a path beyond a symlink)."""
+    if not paths:
+        return set()
+    d = directory.resolve()
+    rels = [str(p.resolve().relative_to(d)) for p in paths if p.resolve().is_relative_to(d)]
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(d), "check-ignore", "-z", "--stdin"],
+            input="\0".join(rels).encode() + b"\0", capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if out.returncode not in (0, 1):
+        return set()
+    ignored = {d / r for r in out.stdout.decode("utf-8", "ignore").split("\0") if r}
+    return {p for p in paths if p.resolve() in ignored}
+
+
+def is_binary(path: Path) -> bool:
+    try:
+        with path.open("rb") as fh:
+            return b"\0" in fh.read(8192)
+    except OSError:
+        return True
 
 
 def iter_target_files(root: Path):
@@ -180,18 +219,21 @@ def iter_target_files(root: Path):
             d = base / dirname
             if not d.is_dir():
                 continue
-            for path in sorted(d.rglob("*")):
-                if not path.is_file():
-                    continue
-                if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
-                    continue
-                if path.name in SKIP_FILES or path.name.endswith(SKIP_FILE_SUFFIXES):
-                    continue
-                if emit(path):
+            candidates = [
+                path for path in sorted(d.rglob("*"))
+                if path.is_file()
+                and not skipped_dir(path.relative_to(root).parts)
+                and path.name not in SKIP_FILES and not path.name.endswith(SKIP_FILE_SUFFIXES)
+            ]
+            # git-ignored files (.DS_Store, caches) never ship; binaries have nothing to read
+            ignored = git_ignored(d, candidates)
+            for path in candidates:
+                if path not in ignored and not is_binary(path) and emit(path):
                     yield path
+        # Named config files are scanned even when git ignores them (a generated .mcp.json).
         for name in sorted(root_files):
             f = base / name
-            if f.is_file() and emit(f):
+            if f.is_file() and not is_binary(f) and emit(f):
                 yield f
 
 
@@ -285,8 +327,8 @@ def scan_settings_json(rel: str, path: Path, out: list[dict]) -> None:
 # --mode=code
 # ---------------------------------------------------------------------------
 
-CODE_SKIP_DIRS = SKIP_DIRS - {"plans", "reviews", "worktrees"} | {
-    ".claude", "vendor", "third_party", "coverage", ".next", ".nuxt", "out",
+CODE_SKIP_DIRS = SKIP_DIRS | {
+    ".cache", ".claude", "vendor", "third_party", "coverage", ".next", ".nuxt", "out",
     "target", ".terraform", ".gradle", "bower_components", "site-packages",
 }
 CODE_SUFFIXES = {
@@ -500,7 +542,7 @@ def main() -> int:
 
         if path.suffix == ".md" and (path.parent.name == "agents" or "agents" in path.parts):
             parse_agent_frontmatter(rel, lines, scope_findings)
-        if path.name in ("mcp.json", "mcp.json.template"):
+        if path.name in ("mcp.json", ".mcp.json", "mcp.json.template"):
             scan_mcp_json(rel, path, scope_findings)
         if path.name in SETTINGS_FILES:
             scan_settings_json(rel, path, scope_findings)

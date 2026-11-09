@@ -13,10 +13,12 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 PR_ID="${1:?ERROR: bb_pr_diffstat.sh requires PR_ID as \$1}"
+[[ "$PR_ID" =~ ^[0-9]+$ ]] || { echo "ERROR: PR_ID must be a number" >&2; exit 1; }
 
 BASE="https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}"
 TMP_BODY=$(mktemp)
 TMP_PAGE=$(mktemp)
+trap 'rm -f "$TMP_BODY" "$TMP_PAGE"' EXIT
 
 # Fetch PR metadata to get source and destination commits
 HTTP_STATUS=$(curl -sSL \
@@ -39,6 +41,11 @@ NEXT_URL="${BASE}/diffstat/${SOURCE_COMMIT}..${DEST_COMMIT}?pagelen=100"
 ALL_FILES="[]"
 
 while [ -n "$NEXT_URL" ]; do
+  # `next` comes from the API response: send the credentials only back to this repo's endpoints
+  case "$NEXT_URL" in
+    "${BASE}/"*) ;;
+    *) echo "ERROR: refusing to follow pagination URL outside ${BASE}/: ${NEXT_URL}" >&2; exit 3 ;;
+  esac
   HTTP_STATUS=$(curl -sSL \
     -K <(curl_basic_auth "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN") \
     -w "%{http_code}" \
@@ -73,5 +80,4 @@ EOF
 )
 done
 
-rm -f "$TMP_BODY" "$TMP_PAGE"
 echo "{\"changed_files\": ${ALL_FILES}}"

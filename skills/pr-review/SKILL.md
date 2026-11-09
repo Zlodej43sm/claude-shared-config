@@ -381,6 +381,8 @@ fi
 
 ### 3d — Post comments
 
+If the Step 1.5 cache directory is gone, create a new one with `CACHE_DIR=$(mktemp -d)` and note its absolute path. Write each finding's body to its own file (`C1.md`, `C2.md`, …) in that directory with the Write tool, never through the shell: finding bodies quote the PR's code, and a line in it equal to a heredoc's delimiter ends the heredoc and runs the rest as shell, while a double-quoted `--body="…"` runs its backticks and `$(…)`. In `--path='<path>'`, write each `'` in the path as `'\''`, so a quote in a PR filename cannot end the argument.
+
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
 if [ "$HOST" = "github" ]; then
@@ -389,20 +391,12 @@ else
   POST_COMMENT=".claude/tools/bb_post_comment.sh"
 fi
 
-# One body file per finding, written with a quoted heredoc: finding bodies quote the
-# PR's code, and in a double-quoted --body="…" its backticks and $(…) would run.
-cat > "$CACHE_DIR/C1.md" <<'FINDING_EOF'
-<transformed finding body>
-FINDING_EOF
-
 # Inline comment
 "$POST_COMMENT" --pr-id="$PR_ID" --body-file="$CACHE_DIR/C1.md" --path='<path>' --line=<LINE>
 
 # General comment (no file reference)
 "$POST_COMMENT" --pr-id="$PR_ID" --body-file="$CACHE_DIR/C1.md"
 ```
-
-If the Step 1.5 cache directory is gone, create a new one with `CACHE_DIR=$(mktemp -d)` first.
 
 Report each posted comment's `id` and `anchor` to the user.
 

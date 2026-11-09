@@ -42,6 +42,7 @@ def load_sync_env():
     path = Path(__file__).resolve().parent.parent / "hooks" / "sync-env.py"
     spec = importlib.util.spec_from_file_location("sync_env", path)
     module = importlib.util.module_from_spec(spec)
+    sys.dont_write_bytecode = True  # no __pycache__ in the shared hooks/ directory
     spec.loader.exec_module(module)
     return module
 
