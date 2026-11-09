@@ -4,7 +4,7 @@ atlassian_fetch — REST fallback for the Atlassian MCP server: read a Jira issu
 or a Confluence page as Markdown, or verify the credentials.
 
 SCHEMA_IN
-  argv  jira <KEY>                       e.g. MA-22
+  argv  jira <KEY>                       e.g. PROJ-22
         confluence <PAGE_URL | PAGE_ID>  .../wiki/spaces/<SPACE>/pages/<ID>[/title] or bare ID
         attachments <KEY> --dir DIR [--max N]   download the issue's image attachments
         check
@@ -321,11 +321,14 @@ def download(url: str, dest: str, max_bytes: int) -> str | None:
             if not location:
                 return f"HTTP {e.code}"
             target = urljoin(url, location)
-            if urlsplit(target).scheme != "https" and urlsplit(target).netloc != urlsplit(url).netloc:
+            src, dst = urlsplit(url), urlsplit(target)
+            same_origin = (dst.scheme, dst.netloc) == (src.scheme, src.netloc)
+            # never downgrade: an https → http redirect, even to the same host, would
+            # send the credentials (or the image) in clear text
+            if dst.scheme != "https" and not same_origin:
                 return "refused non-https redirect"
-            same_host = urlsplit(target).netloc == urlsplit(url).netloc
             resp = urllib.request.urlopen(
-                urllib.request.Request(target, headers={"Authorization": f"Basic {cred}"} if same_host else {}),
+                urllib.request.Request(target, headers={"Authorization": f"Basic {cred}"} if same_origin else {}),
                 timeout=30)
         with resp:
             data = resp.read(max_bytes + 1)

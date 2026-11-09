@@ -12,7 +12,7 @@
         "--env", "CONFLUENCE_API_TOKEN={{JIRA_API_TOKEN}}",
         "--env", "ENABLED_TOOLS=jira_get_issue,jira_search,confluence_get_page,confluence_search",
         "--",
-        "uvx", "mcp-atlassian"
+        "uvx", "mcp-atlassian@0.24.1"
       ]
     },
     "atlassian-oauth": {
@@ -31,7 +31,7 @@
         "-e", "SONARQUBE_TOKEN",
         "-e", "SONARQUBE_ORG",
         "-e", "SONARQUBE_URL",
-        "mcp/sonarqube"
+        "mcp/sonarqube@sha256:925c88bc7cab2a1e1025b0bd43f0af504cd8ce1b99e9663ececaca914fb632e7"
       ]
     },
     "github": {
@@ -45,7 +45,7 @@
         "docker", "run", "--init", "-i", "--rm",
         "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
         "-e", "GITHUB_HOST",
-        "ghcr.io/github/github-mcp-server"
+        "ghcr.io/github/github-mcp-server:v2.1.0"
       ]
     },
     "notion": {
@@ -54,7 +54,7 @@
         ".claude/tools/mcp-run.py",
         "--env", "NOTION_TOKEN={{NOTION_TOKEN}}",
         "--",
-        "npx", "-y", "@notionhq/notion-mcp-server"
+        "npx", "-y", "@notionhq/notion-mcp-server@2.6.1"
       ]
     },
     "notion-oauth": {

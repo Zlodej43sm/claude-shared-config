@@ -70,7 +70,7 @@ CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pr-review.XXXXXXXX")
 `$CACHE_DIR` is a fresh, unique directory for this invocation's Jira/Confluence prefetch data — carry it through every later step exactly like `$HOST`. Every command that calls `extract_pr_links.py`, `jira_fetch_batch.sh`, `conf_fetch_batch.sh`, `extract_secondary_links.py`, or `build_prefetch_context.py` must `export PR_REVIEW_CACHE_DIR="$CACHE_DIR"` first (in addition to sourcing `.claude/.env`) — these tools reject a missing `PR_REVIEW_CACHE_DIR` rather than falling back to a shared location. This keeps concurrent or sequential `/pr-review` runs — different PRs, different projects sharing this same tool set, or two sessions running at once — from reading each other's cached tickets and pages out of a shared temp directory.
 
 Required keys:
-- **Always**: `JIRA_WORKSPACE`, `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`.
+- **Jira**: none. Tickets and pages are read through the hosted Atlassian MCP connector first; `JIRA_EMAIL` / `JIRA_API_TOKEN` are only the fallback (order: `agents/jira-context.md` → "Access paths"). Never stop because they are missing or placeholders. `JIRA_BASE_URL` names the site (else ask the connector's `getAccessibleAtlassianResources`).
 - **When `$HOST=bitbucket`**: `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`.
 - **When `$HOST=github`**: `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`GITHUB_API_URL` is optional — only needed for GitHub Enterprise Server).
 
@@ -139,7 +139,14 @@ printf '%s|||COMMITS|||%s' "$title $description $source_branch" "$commit_message
 
 Capture as `INITIAL_LINKS`. Extract `jira_keys[].key` → `JIRA_KEYS` list, `conf_page_ids[].id` → `CONF_IDS` list.
 
-**1c. Batch-fetch tickets + Confluence pages in parallel:**
+**1c. Fetch tickets + Confluence pages — hosted MCP first.**
+
+When a hosted Atlassian MCP connector is available (any tool named `getJiraIssue` / `getConfluenceContent`; load with ToolSearch if deferred; `cloudId` = the hostname of `$JIRA_BASE_URL`), fetch with it in parallel tool calls and write the same cache files the scripts write, so Rounds 2–3 work unchanged:
+- `getJiraIssue` `{issueIdOrKey, view: "full"}` → write `issues.nodes[0]` (has `fields`) to `$CACHE_DIR/jira_<KEY>.json`; remote links (`getJiraIssueRemoteIssueLinks` when present, else skip) → `$CACHE_DIR/jira_remotelinks_<KEY>.json` as a JSON array.
+- `getConfluenceContent` `{content_id, detail: "full", content_format: "html"}` → `$CACHE_DIR/conf_<ID>.json` as `{"id", "title", "space": {"key"}, "body": {"export_view": {"value": <html>}}}`.
+- Not found → leave the file out and note "Not found".
+
+Use the scripts below only when no hosted connector works and the token is set:
 
 ```bash
 set -a; . .claude/.env; set +a
@@ -149,7 +156,7 @@ export PR_REVIEW_CACHE_DIR="$CACHE_DIR"
 wait
 ```
 
-For 404s reported in the JSON outputs: note "Not found" and continue. For exit code 1 (credential error): stop and tell the user.
+For 404s reported in the JSON outputs: note "Not found" and continue. For exit code 1 (credential error): continue without Jira context and tell the user to sign in to the Atlassian connector or refresh the token.
 
 ### Round 2 — Secondary links
 
@@ -165,7 +172,7 @@ export PR_REVIEW_CACHE_DIR="$CACHE_DIR"
 
 Capture as `SECONDARY`. Extract `new_jira_keys[].key` → `NEW_KEYS`, `new_conf_page_ids[].id` → `NEW_IDS`.
 
-**2b. Fetch any new items (skip if both lists are empty):**
+**2b. Fetch any new items (skip if both lists are empty), same order as 1c:**
 
 ```bash
 set -a; . .claude/.env; set +a
@@ -305,7 +312,7 @@ From `.claude/reviews/pr-<PR_ID>.md`, extract every `Cx` finding header and body
 - **File-only candidates** — header has `` `path/to/file.py` `` with no `:LINE`.
 - **True general candidates** — header has no file path.
 
-**Comment body transformation:** Header `**Cx** — \`path:line\` — severity`→ opening line`**Cx — emoji severity**` (drop the path:line, keep badge + severity). Drop the `PR line:` / `PR file:` link line too, since the comment already sits on that line; keep `Same pattern:` and `To fix (not in the PR):` links. Follow with the substantive paragraph(s). Strip any meta-framing.
+**Comment body transformation:** Header `**Cx** — \`path:line\` — severity`→ opening line`**Cx — emoji severity**` (drop the path:line, keep badge + severity). Drop the `PR line:` / `PR file:` link line too, since the comment already sits on that line; keep `Same pattern:` and `To fix (not in the PR):` links. Follow with the substantive paragraph(s). Strip any meta-framing. Only a `should-fix (decision needed)` finding gets no opening line: post its plain-text question alone, so it reads like a comment from a human reviewer. Every other finding keeps the `**Cx — emoji severity**` opening line.
 
 ### 3b.5 — Gate: fetch the PR diffstat
 

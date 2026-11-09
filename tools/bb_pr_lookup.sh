@@ -14,6 +14,7 @@
 # EXIT  0=ok  1=bad-args  2=http-error
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 BRANCH="${1:?ERROR: bb_pr_lookup.sh requires BRANCH as \$1}"
 BASE="https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/pullrequests"
@@ -21,7 +22,7 @@ BASE="https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUC
 TMP_LOOKUP=$(mktemp)
 trap 'rm -f "$TMP_LOOKUP"' EXIT
 
-curl -sSL --fail-with-body -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}" \
+curl -sSL --fail-with-body -K <(curl_basic_auth "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN") \
   --get --data-urlencode "q=source.branch.name=\"${BRANCH}\" AND state=\"OPEN\"" \
   "${BASE}" -o "$TMP_LOOKUP"
 

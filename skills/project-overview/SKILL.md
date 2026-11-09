@@ -28,10 +28,9 @@ its own report file (Step 11).
 
 - The user wants a review of a specific diff/PR — use `pr-review` or the
   `code-review` skill instead.
-- The user wants this *shared Claude config repo* (`skills/`, `agents/`,
-  `tools/`) audited for leaked secrets or portability — use `security-audit`.
-  That skill scans this repo's own tooling; this skill scans an arbitrary
-  target project.
+- The user wants a security audit — of an application's code, or of this
+  *shared Claude config repo* (`skills/`, `agents/`, `tools/`) for leaked
+  secrets or portability — use `security-audit`.
 - The user wants a plain-English doc for one ticket/branch's changes — use
   `feature-doc`.
 - The user wants SonarQube issues triaged — use `sonar-triage`.

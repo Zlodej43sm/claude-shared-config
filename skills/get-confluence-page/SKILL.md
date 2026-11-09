@@ -17,7 +17,7 @@ Retrieve a Confluence page and present its full title and body as Markdown. Then
 
 ## Do Not Use When
 
-- Atlassian is not connected at all (no API token and the hosted server isn't signed in — neither path can work) — test with `python3 .claude/tools/atlassian_fetch.py check`.
+- Atlassian is not connected at all (no hosted Atlassian MCP connector signed in and no API token).
 - The URL is not on the same tenant as `$CONFLUENCE_BASE_URL`.
 
 ## Inputs
@@ -61,9 +61,11 @@ Omit the **Linked Pages** section entirely when no Confluence links are found in
 - If `args` looks like a bare integer, treat it as a page ID.
 - If `args` is neither, tell the user it doesn't look like a Confluence URL or page ID and stop.
 
-### Step 2 — Fetch the root page (MCP first, REST fallback)
+### Step 2 — Fetch the root page (hosted MCP first, API token last)
 
-**Path A — MCP.** Call the `mcp__atlassian__confluence_get_page` tool:
+**Path A — hosted Atlassian MCP (browser sign-in, no API token), always first** — any connector that exposes `getConfluenceContent` (`mcp__atlassian-oauth__*`, `mcp__claude_ai_Atlassian_MCP__*`, `mcp__plugin_meta_atlassian__*`, or a claude.ai connector with an id-style prefix; load it with ToolSearch if deferred). Pass `cloudId` = the hostname of `$CONFLUENCE_BASE_URL` / `$JIRA_BASE_URL`, then `getConfluenceContent` with `{cloudId, content_url or content_id, detail: "full", content_format: "markdown"}`. If the server is listed but its tools are missing, the user hasn't signed in: tell them `/mcp` → `atlassian-oauth` → **Authenticate** (browser window), then retry — and continue with Path B meanwhile if an API token is configured.
+
+**Path A2 — API-token MCP** (only when `JIRA_EMAIL` / `JIRA_API_TOKEN` are set). Call the `mcp__atlassian__confluence_get_page` tool:
 
 ```
 tool: mcp__atlassian__confluence_get_page
@@ -74,8 +76,6 @@ args: { "page_id": "<PAGE_ID>" }
 
 The tool returns the page title, space name, URL, and body as Markdown.
 
-**Path A2 — hosted Atlassian MCP (browser sign-in, no API key)** — `mcp__atlassian-oauth__*` (the project's hosted server — sign in once from `/mcp`) or `mcp__claude_ai_Atlassian_MCP__*` (your claude.ai connector). Call `getAccessibleAtlassianResources` once and pass the `cloudId` of the site matching `$CONFLUENCE_BASE_URL` / `$JIRA_BASE_URL`, then `getConfluenceContent` with `{cloudId, content_url or content_id, detail: "full", content_format: "markdown"}`. If the server is listed but its tools are missing, the user hasn't signed in: tell them `/mcp` → `atlassian-oauth` → **Authenticate** (browser window), then retry — and continue with Path B meanwhile if an API token is configured.
-
 **Path B — REST fallback.** Needs `JIRA_EMAIL`/`JIRA_API_TOKEN`. Use it when no MCP tool is available or the calls error or return nothing:
 
 ```bash
@@ -84,7 +84,7 @@ python3 .claude/tools/atlassian_fetch.py confluence "<FULL_URL or PAGE_ID>"
 
 It returns JSON `{id, title, space, url, markdown, links[], confluence_links[]}` — use `markdown` as the body and `confluence_links` as the pre-extracted Confluence URLs for Steps 3–4. Exit `2` = HTTP error (message on stderr: 401/403/404); short `/wiki/x/…` links can't be resolved, ask the user for the full page URL. If the first MCP call failed because the tool is unavailable (not a 404), use Path B for every later page too.
 
-Record the canonical URL as the root URL and add it to a `seen` set (used to prevent duplicate fetches and cycles). Say which path was used (`mcp` or `rest`) in a one-line note under the output header.
+Record the canonical URL as the root URL and add it to a `seen` set (used to prevent duplicate fetches and cycles). Say which path was used (`oauth`, `mcp` or `rest`) in a one-line note under the output header.
 
 If the body is unexpectedly empty, note that dynamic Confluence macros (live Jira tables, search) are rendered as static placeholders and may not have content. Continue — still scan for links.
 
@@ -123,8 +123,8 @@ Render the full structure:
 
 | Condition            | Action                                                                                     |
 | -------------------- | ------------------------------------------------------------------------------------------ |
-| MCP tool unavailable | Use the REST fallback (Step 2, Path B) — no user action needed |
-| 401 / auth error     | Both paths use the same token: tell user to refresh `JIRA_API_TOKEN` / `JIRA_EMAIL` in `.claude/.env` and restart |
+| MCP tool unavailable | Use the next path (A → A2 → B) — no user action needed |
+| 401 / auth error     | Token paths only: retry on Path A; if Path A is not signed in, tell the user to sign in to the Atlassian connector or refresh `JIRA_API_TOKEN` / `JIRA_EMAIL` |
 | 404 / not found      | Confirm the URL/ID; the page may not exist or may require access                           |
 | 403 / forbidden      | The space is restricted — note this to the user and skip that page                         |
 

@@ -10,6 +10,7 @@
 # EXIT  0=ok  1=bad-args  2=not-found (404)  3=other-http-error
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 PR_ID="${1:?ERROR: bb_pr_diffstat.sh requires PR_ID as \$1}"
 
@@ -19,7 +20,7 @@ TMP_PAGE=$(mktemp)
 
 # Fetch PR metadata to get source and destination commits
 HTTP_STATUS=$(curl -sSL \
-  -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}" \
+  -K <(curl_basic_auth "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN") \
   -w "%{http_code}" \
   -o "$TMP_BODY" \
   "${BASE}/pullrequests/${PR_ID}")
@@ -39,7 +40,7 @@ ALL_FILES="[]"
 
 while [ -n "$NEXT_URL" ]; do
   HTTP_STATUS=$(curl -sSL \
-    -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}" \
+    -K <(curl_basic_auth "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN") \
     -w "%{http_code}" \
     -o "$TMP_PAGE" \
     "$NEXT_URL")

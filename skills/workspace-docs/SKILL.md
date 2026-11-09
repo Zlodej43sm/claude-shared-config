@@ -67,7 +67,7 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
 
 ### init / align / refresh / add-repo (shared steps)
 1. **Inventory:** `WSD inventory` (repos with remote, branch, HEAD, version/lock/CI/agent files;
-   other root entries flagged `sensitive`; existing chunks). `refresh`: `WSD changes --fetch` (see
+   other root entries flagged `sensitive`; existing chunks). `refresh`: `WSD sync`, then `WSD changes` (see
    the refresh procedure) and `WSD status` for new (`MISSING DOC`) or gone (`ORPHAN DOC`) repos; `--repos` narrows it.
 2. **Per-repo analysis** (init: all; refresh/add-repo: selected; align: only where facts are missing).
    Spawn one `Explore` subagent per repo in parallel (≤ 8 at a time; batch tiny repos). Brief each with

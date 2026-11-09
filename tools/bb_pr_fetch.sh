@@ -20,17 +20,17 @@
 # EXIT  0=ok  1=bad-args  2=http-error
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 PR_ID="${1:?ERROR: bb_pr_fetch.sh requires PR_ID as \$1}"
 BASE="https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/pullrequests"
-AUTH="${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}"
 
 TMP_META=$(mktemp)
 TMP_COMMITS=$(mktemp)
 trap 'rm -f "$TMP_META" "$TMP_COMMITS"' EXIT
 
-curl -sSL --fail-with-body -u "$AUTH" "${BASE}/${PR_ID}"                     -o "$TMP_META"    &
-curl -sSL --fail-with-body -u "$AUTH" "${BASE}/${PR_ID}/commits?pagelen=50"  -o "$TMP_COMMITS" &
+curl -sSL --fail-with-body -K <(curl_basic_auth "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN") "${BASE}/${PR_ID}"                     -o "$TMP_META"    &
+curl -sSL --fail-with-body -K <(curl_basic_auth "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN") "${BASE}/${PR_ID}/commits?pagelen=50"  -o "$TMP_COMMITS" &
 wait
 
 python3 - "$TMP_META" "$TMP_COMMITS" <<'PY'

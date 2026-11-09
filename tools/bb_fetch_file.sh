@@ -11,6 +11,7 @@
 # EXIT  0=ok  1=bad-args  2=not-found (404)  3=other-http-error
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 COMMIT="${1:?ERROR: bb_fetch_file.sh requires COMMIT_HASH as \$1}"
 FILE="${2:?ERROR:   bb_fetch_file.sh requires FILE_PATH as \$2}"
@@ -21,7 +22,7 @@ TMP_FILE=$(mktemp)
 trap 'rm -f "$TMP_FILE"' EXIT
 
 HTTP_STATUS=$(curl -sSL -w "%{http_code}" \
-  -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}" \
+  -K <(curl_basic_auth "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN") \
   "${BASE}/${COMMIT}/${FILE}" \
   -o "$TMP_FILE")
 

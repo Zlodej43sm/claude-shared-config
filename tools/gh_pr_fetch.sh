@@ -22,19 +22,19 @@
 # EXIT  0=ok  1=bad-args  2=http-error
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 PR_NUMBER="${1:?ERROR: gh_pr_fetch.sh requires PR_NUMBER as \$1}"
 API="${GITHUB_API_URL:-https://api.github.com}"
 BASE="${API}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/pulls"
-AUTH="Authorization: Bearer ${GITHUB_TOKEN}"
 
 TMP_META=$(mktemp)
 TMP_COMMITS=$(mktemp)
 trap 'rm -f "$TMP_META" "$TMP_COMMITS"' EXIT
 
-curl -sSL --fail-with-body -H "$AUTH" -H "Accept: application/vnd.github+json" \
+curl -sSL --fail-with-body -K <(curl_bearer_auth "$GITHUB_TOKEN") -H "Accept: application/vnd.github+json" \
   "${BASE}/${PR_NUMBER}"                      -o "$TMP_META"    &
-curl -sSL --fail-with-body -H "$AUTH" -H "Accept: application/vnd.github+json" \
+curl -sSL --fail-with-body -K <(curl_bearer_auth "$GITHUB_TOKEN") -H "Accept: application/vnd.github+json" \
   "${BASE}/${PR_NUMBER}/commits?per_page=100" -o "$TMP_COMMITS" &
 wait
 

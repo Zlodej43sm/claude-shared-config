@@ -21,6 +21,7 @@
 # EXIT  0=ok  1=bad-args  2=http-error
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 PR_ID="" BODY="" FILE_PATH="" LINE=""
 for arg in "$@"; do
@@ -49,7 +50,7 @@ print(json.dumps(d))
 PY
 )
 
-RESPONSE=$(curl -sSL --fail-with-body -u "${BITBUCKET_EMAIL}:${BITBUCKET_API_TOKEN}" \
+RESPONSE=$(curl -sSL --fail-with-body -K <(curl_basic_auth "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN") \
   -X POST "${BASE}" -H "Content-Type: application/json" -d "$PAYLOAD")
 
 python3 - "$RESPONSE" "$FILE_PATH" "$LINE" <<'PY'

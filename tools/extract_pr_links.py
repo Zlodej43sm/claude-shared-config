@@ -11,7 +11,7 @@ SCHEMA_IN
 
 SCHEMA_OUT  stdout JSON
   {
-    "jira_keys":     [{ "key": "MA-22", "via": "pr-text" | "commit" }, ...],
+    "jira_keys":     [{ "key": "PROJ-22", "via": "pr-text" | "commit" }, ...],
     "conf_page_ids": [{ "id": "12345",  "via": "pr-text" | "commit" }, ...],
     "external_repos": ["../sibling-service", ...]
   }

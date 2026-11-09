@@ -5,7 +5,7 @@ config, linked into every project instead of copy-pasted per repo. Includes
 ready-made skills for Jira/Confluence/Notion context-gathering, Bitbucket/GitHub
 connection setup, PR review and comment-answering, SonarQube triage, PR-splitting, plan-first
 feature implementation, evidence-based repository/service overviews, and
-security auditing of this shared config tree itself.
+security auditing of application code and of this shared config tree itself.
 
 ## Quick start
 
@@ -80,21 +80,21 @@ GITHUB_HOST=https://git.example.com             # github MCP server
 
 ### Connecting Jira / Confluence without an API key
 
-With no usable `JIRA_EMAIL` + `JIRA_API_TOKEN` in `.claude/.env` (only `JIRA_BASE_URL` and
-`JIRA_WORKSPACE` are required), the hosted `atlassian-oauth` server is enabled. Start Claude
-Code, restart it once, then:
+Every Jira/Confluence read tries the hosted Atlassian MCP connector first (browser sign-in, no
+API key): `atlassian-oauth`, or your claude.ai Atlassian connector. `JIRA_EMAIL` +
+`JIRA_API_TOKEN` are only a fallback; no skill stops because they are missing. The order lives
+in `agents/jira-context.md` → "Access paths". Sign in once:
 
 ```
 /mcp                      -> atlassian-oauth  (shows "needs authentication")
                              choose Authenticate -> the Atlassian authorization window opens
                              in your browser -> pick the site -> done
-/get-jira-task MA-22
+/get-jira-task PROJ-22
 /get-confluence-page https://acme.atlassian.net/wiki/spaces/ENG/pages/123/Retry-Policy
 ```
 
-Add `JIRA_EMAIL` + `JIRA_API_TOKEN` and the API-token `atlassian` server takes over at the next
-start. The token is still needed for ticket **image attachments**, the REST fallback and the
-PR-review Jira preflight — those use the REST API, which browser sign-in doesn't cover.
+The token is still needed for ticket **image attachments** (REST download) and for the
+REST fallback when no MCP connector is signed in.
 
 ### Connecting Notion
 
@@ -229,6 +229,7 @@ Invoked as `/<skill-name>` (or by the natural-language triggers noted below), un
 | `answer-pr-comments` | Answers unanswered human reviewer comments on a Bitbucket or GitHub PR. Default: composes and posts replies via the `comment-responder` agent. With `--fix`: verifies each comment against the code, fixes the valid ones, declines the rest with evidence, runs the project's checks, then commits, pushes and posts after one confirmation. | `/answer-pr-comments <pr-number> [<reviewer-name>] [--dry-run] [--fix]` |
 | `backend-implementation` | Backend coding standards for layered services: loads the project's own coding-standards docs first (pointed to by its root `CLAUDE.md`), then applies generic rules — repository pattern (models hold business logic, providers only access data), records vs API contracts, upserts and batches, validation, errors, logging, config, security, tests, PR hygiene. Holds no project data. | Automatically when implementing, fixing or reviewing backend code; project rules go in the project's `docs/coding-standards*.md` |
 | `backend-review` | Reviews backend code (PR, branch or diff) against the same standards used to write it: the `backend-implementation` rules plus the project's coding-standards and style docs. Checks layering, contracts, upserts, validation, errors, logging, security, tests and naming/style; ranks findings and gives ready-to-apply suggestion blocks. Read-only. The `pr-reviewer` agent applies it to backend files. | When reviewing backend code, alone or inside `/pr-review` |
+| `frontend-review` | Reviews front-end / UI code (PR, branch or diff) for any UI stack. First detects the stack from `package.json` and config (React, Next.js, Angular, Vue, Nuxt, Svelte, Solid, web components, React Native or plain HTML/CSS/templates; data layer, styling, i18n, test tools). Then applies UI-wide checks (API data contract and release order, loading/empty/error states, accessibility, i18n, SSR/hydration, state and data, performance, XSS, design system, analytics, tests) plus the detected framework's best practices from `references/` (`react.md`, `angular.md`, `vue.md`, `other-ui.md`). Holds no project data. Read-only. The `pr-reviewer` agent applies it to the `frontend` bucket. | When reviewing UI code, alone or inside `/pr-review` |
 | `caveman` | Token-efficient caveman-mode responses (~75% fewer tokens, full technical accuracy). | `/caveman`, or saying "less tokens" / "be brief"; stays active until "stop caveman" / "normal mode" |
 | `connect-git` | Verifies the project's git-hosting connection: resolves Bitbucket vs GitHub, checks the credentials in `.claude/.env`, tests them against the host API, and confirms the matching MCP server (GitHub) is in `.mcp.json` and answers a live read-only call; reports Notion status. Read-only. | `/connect-git`; first-time setup, after switching remotes, or when PR skills return 401/403/404 |
 | `create-jira-task` | Creates one or more Jira issues (default type Task), optionally as children of a parent issue such as an Epic. A real **write** operation against Jira Cloud. | `/create-jira-task [--parent=KEY] [--project=KEY] [--issuetype=NAME] [--dry-run]` |
@@ -242,7 +243,7 @@ Invoked as `/<skill-name>` (or by the natural-language triggers noted below), un
 | `pr-review` | Reviews a Bitbucket or GitHub PR (by number, URL, or branch): batch-fetches every linked Jira ticket / Confluence page, asks about cross-service dependencies, then delegates to the `pr-reviewer` agent for a full structured review. Each finding links to its line in the PR's diff view (`tools/pr_line_links.py`). | `/pr-review <pr-number \| url \| branch>` |
 | `project-blueprint` | Turns a ticket or a free-text feature description into a pre-implementation project blueprint — architecture, service ownership, API inventory, proposed directory tree, phased roadmap — grounded in technologies/patterns already used elsewhere in the org. Reuses `jira-context` for ticket fetching and `project-overview`'s scanner for repo/sibling inspection. Planning documents only, no code. | `/project-blueprint <ticket-key \| free-text description> [-- <repo1> [<repo2> ...]]` |
 | `project-overview` | Produces an evidence-based technical/architectural overview of a repo or service — purpose, tech stack, architecture, dependency map, ecosystem relationships, risks/gaps — every claim cited to a file, line, or URL. Read-only. | `/project-overview [<path>] [-- <repo1> [<repo2> ...]]` |
-| `security-audit` | Scans a Claude Code config tree (skills/agents/tools/hooks/workflows, `mcp.json`, `settings.json`, env templates) for hardcoded secrets, project-specific identifiers, values that belong in a project-local `.env`, and overly-broad tool/permission scopes. Read-only. | `/security-audit [path]` |
+| `security-audit` | Read-only security audit in two parts. **Config:** scans a Claude Code config tree (skills/agents/tools/hooks/workflows, `mcp.json`, `settings.json`, their templates, env templates; plus `bin/` and `README.md` in this repo) for hardcoded secrets, project-specific identifiers, values that belong in a project-local `.env`, and overly-broad tool/permission scopes. **Code:** audits an app's source in any language for injection, auth/authorization gaps (incl. IDOR), secrets and sensitive data, SSRF, path traversal, unsafe deserialization, XSS/CSRF/CORS/cookies, weak crypto/TLS, and config, dependency and container risks; every finding traces input → sink → missing guard. Mechanical first pass in `tools/security_audit_scan.py --mode=config\|code`. The `pr-reviewer` agent applies the config checks to the `claude-config` bucket and the code checks to every changed file. | `/security-audit [path] [--config\|--code\|--all]`; no flag runs config only in a shared config repo, both parts elsewhere |
 | `sonar-triage` | Fetches and triages SonarQube Cloud issues (PR, branch, or main) and proposes a fix for each, checking a project-local `.claude/sonar-known-issues.md` (if present) for confirmed false positives. Analysis only. | `/sonar-triage [pr <number> \| branch <name> \| main]` |
 | `split-pr` | Analyzes a large/complex PR or branch and proposes how to split it into smaller, dependency-ordered (stacked) PRs. Analysis only unless `--apply` is passed. | `/split-pr [<pr-identifier> \| <branch>] [--base=<branch>] [--apply] [--interactive]` |
 | `test-design` | Rules for writing and reviewing tests in any language or stack (backend, frontend, infrastructure, scripts): inventory existing tests first, one unique behaviour per test, lowest level that can prove it, no tests of library/tool guarantees, no duplicates or implied tests, parameterise variants, self-check table. Used by `backend-implementation`, `backend-review` and the `pr-reviewer` agent. | Whenever tests are added, changed, planned or reviewed |

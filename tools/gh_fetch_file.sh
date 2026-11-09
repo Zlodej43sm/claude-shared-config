@@ -12,6 +12,7 @@
 # EXIT  0=ok  1=bad-args  2=not-found (404)  3=other-http-error
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 COMMIT="${1:?ERROR: gh_fetch_file.sh requires COMMIT_HASH as \$1}"
 FILE="${2:?ERROR:   gh_fetch_file.sh requires FILE_PATH as \$2}"
@@ -23,7 +24,7 @@ TMP_FILE=$(mktemp)
 trap 'rm -f "$TMP_FILE"' EXIT
 
 HTTP_STATUS=$(curl -sSL -w "%{http_code}" \
-  -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" \
+  -K <(curl_bearer_auth "$GITHUB_TOKEN") -H "Accept: application/vnd.github+json" \
   --get --data-urlencode "ref=${COMMIT}" \
   "${BASE}/${FILE}" \
   -o "$TMP_FILE")

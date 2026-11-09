@@ -14,6 +14,7 @@
 # EXIT  0=ok (partial not_found in JSON)  1=credential-error (401/403)  2=missing-cache-dir
 
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 [[ $# -eq 0 ]] && { echo '{"fetched":[],"not_found":[]}'; exit 0; }
 
 : "${PR_REVIEW_CACHE_DIR:?ERROR: PR_REVIEW_CACHE_DIR must be set (see pr-review SKILL.md Step 0)}"
@@ -26,7 +27,7 @@ fetch_one() {
   local ID="$1"
   local sc
   sc=$(curl -sS -L -w "%{http_code}" \
-    -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" -H "Accept: application/json" \
+    -K <(curl_basic_auth "$JIRA_EMAIL" "$JIRA_API_TOKEN") -H "Accept: application/json" \
     "${CONF_API}/content/${ID}?expand=body.export_view,title,space" \
     -o "${PR_REVIEW_CACHE_DIR}/conf_${ID}.json")
   echo "$sc" > "${STATUS_DIR}/${ID}"

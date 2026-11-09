@@ -20,8 +20,7 @@ You are the entry point for generating a feature documentation file. Your job is
 set -a; source .claude/.env; set +a
 ```
 
-Required: `JIRA_WORKSPACE`, `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`.
-If any are missing or placeholder, tell the user and stop.
+No key is required. Jira is read through the hosted Atlassian MCP connector first; `JIRA_EMAIL` / `JIRA_API_TOKEN` are only a fallback (order: `agents/jira-context.md` → "Access paths").
 
 ## Step 1 — Resolve branch and ticket key
 
@@ -32,7 +31,7 @@ git branch --show-current
 Parse the ticket key from the branch name using the pattern `[A-Z]+-[0-9]+` (matches any Jira project prefix). The primary prefix is `$JIRA_WORKSPACE` (from `.env`), but branches may carry other project prefixes (e.g. ops, devops, infra keys). Examples:
 
 - `feat/$JIRA_WORKSPACE-13-avro-schema` → `$JIRA_WORKSPACE-13`
-- `feat/OPS-5566-sdk-publish` → `OPS-5566`
+- `feat/OPS-123-sdk-publish` → `OPS-123`
 
 If the user supplied a key in `args`, use that instead. If neither source yields a key, ask the user.
 
@@ -43,7 +42,7 @@ Determine the output path:
 
 ## Step 2 — Fetch the Jira ticket
 
-Call `mcp__atlassian__jira_get_issue` with the resolved key. If it fails, fall back to JQL search via `mcp__atlassian__jira_search`. With no API-token server (browser sign-in instead), use the hosted server: `getAccessibleAtlassianResources` once for the `cloudId`, then `getJiraIssue` (`mcp__atlassian-oauth__*` or the claude.ai connector). Extract:
+First the hosted Atlassian MCP connector (any tool named `getJiraIssue`; load it with ToolSearch if deferred): `getJiraIssue` with `cloudId` = the hostname of `$JIRA_BASE_URL`. Only if it is unavailable: `mcp__atlassian__jira_get_issue` (then `mcp__atlassian__jira_search`), then the curl below. Extract:
 
 - Summary (title)
 - Status
@@ -51,9 +50,9 @@ Call `mcp__atlassian__jira_get_issue` with the resolved key. If it fails, fall b
 - Acceptance criteria (look for an "Acceptance Criteria" heading inside the description)
 - Any linked Confluence page URLs (scan description for links starting with `$CONFLUENCE_BASE_URL`)
 
-If a Confluence URL is found, fetch it via `mcp__atlassian__confluence_get_page` (hosted server: `getConfluenceContent` with the same `cloudId`) and include the content in the context passed to the subagent.
+If a Confluence URL is found, fetch it with the same order (`getConfluenceContent` with the same `cloudId`, then `mcp__atlassian__confluence_get_page`) and include the content in the context passed to the subagent.
 
-On MCP unavailability: fall back to curl.
+When no MCP path works and the token is set: fall back to curl.
 
 ```bash
 set -a; source .claude/.env; set +a

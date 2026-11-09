@@ -43,9 +43,13 @@ case "$mode" in
     if [ -z "$files_list" ]; then
       exit 0
     fi
-    if ! printf '%s\n' "$files_list" | xargs "$PRETTIER" --check --ignore-unknown >/tmp/prettier-check.out 2>&1; then
+    # Private temp file: a fixed /tmp path would be shared by concurrent sessions
+    # and could be pre-created as a symlink by another local user.
+    out=$(mktemp "${TMPDIR:-/tmp}/prettier-check.XXXXXX") || exit 1
+    trap 'rm -f "$out"' EXIT
+    if ! printf '%s\n' "$files_list" | xargs "$PRETTIER" --check --ignore-unknown >"$out" 2>&1; then
       echo "Prettier found unformatted files. Run \`yarn prettier --write\` on:" >&2
-      grep -E '^\[warn\] ' /tmp/prettier-check.out | grep -vE 'Code style issues' >&2 || cat /tmp/prettier-check.out >&2
+      grep -E '^\[warn\] ' "$out" | grep -vE 'Code style issues' >&2 || cat "$out" >&2
       exit 2
     fi
     ;;

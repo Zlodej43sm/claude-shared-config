@@ -19,6 +19,7 @@
 # EXIT  0=ok  1=bad-args  2=http-error
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 BRANCH="${1:?ERROR: gh_pr_lookup.sh requires BRANCH as \$1}"
 API="${GITHUB_API_URL:-https://api.github.com}"
@@ -27,7 +28,7 @@ BASE="${API}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/pulls"
 TMP_LOOKUP=$(mktemp)
 trap 'rm -f "$TMP_LOOKUP"' EXIT
 
-curl -sSL --fail-with-body -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" \
+curl -sSL --fail-with-body -K <(curl_bearer_auth "$GITHUB_TOKEN") -H "Accept: application/vnd.github+json" \
   --get --data-urlencode "head=${GITHUB_OWNER}:${BRANCH}" --data-urlencode "state=open" \
   "${BASE}" -o "$TMP_LOOKUP"
 

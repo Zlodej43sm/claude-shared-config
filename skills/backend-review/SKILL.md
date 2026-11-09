@@ -43,5 +43,6 @@ Use the groups of `../backend-implementation/references/review-checklist.md` as 
   ````
 - For a rename, say what the current name makes a reader believe that isn't true, and list every other line that needs the same rename ("Line 64 needs the same rename").
 - Ask a question instead of asserting when the intent is unclear ("What do the other batch methods return for an empty list? Could we align?").
+- A should-fix that needs a decision first (which rule is right, should two places agree) is labelled `should-fix (decision needed)` in the review, and only its comment text is written the way a human reviewer would: short, in plain words, with only the facts needed to answer it and no label in the text ("`getX` uses the country rate but `getY` only the default one, so the two pages can show different numbers. Which one is right? If it's the country rate, should we open a ticket to align `getY`?"). Every other finding keeps its usual label.
 - Don't flag what the project docs mark as accepted, and don't re-raise points already answered in the threads.
 - Read-only: don't edit code, don't post comments, don't resolve threads unless the user asks.

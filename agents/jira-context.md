@@ -1,7 +1,6 @@
 ---
 name: jira-context
 description: 'Fetches a Jira ticket and exhaustively pulls every Confluence page referenced in the description, remote links, or linked pages (two levels deep) — full bodies, classified by type. Also reads CLAUDE.md from the primary repo and any related repos provided. Returns a single structured context block for use by planning or review agents.'
-tools: 'Bash, Read, Glob, mcp__atlassian-oauth__*, mcp__claude_ai_Atlassian_MCP__*, mcp__atlassian__jira_get_issue, mcp__atlassian__jira_search, mcp__atlassian__confluence_get_page, mcp__atlassian__confluence_search'
 model: haiku
 color: blue
 ---
@@ -16,35 +15,32 @@ You receive:
 - `related_repos` — comma-separated list of local repo paths or slugs, may be `"none"`.
 - `project_root` — absolute path to the primary project (the one that contains `.claude/.env`).
 
-## Step 1 — Load credentials
+## Step 1 — Load settings
 
 ```bash
-set -a; source <project_root>/.claude/.env; set +a
+set -a; [ -f <project_root>/.claude/.env ] && . <project_root>/.claude/.env; set +a
 ```
 
-Required: `JIRA_BASE_URL`, `JIRA_WORKSPACE`.
-Optional: `CONFLUENCE_BASE_URL`; `JIRA_EMAIL` + `JIRA_API_TOKEN` (needed only for the API-token MCP server and the REST fallback — without them the hosted browser-sign-in server is used).
+Nothing is required. `JIRA_BASE_URL` picks the site (else the first site from `getAccessibleAtlassianResources`); `JIRA_WORKSPACE` only resolves bare numbers; `CONFLUENCE_BASE_URL` defaults to `$JIRA_BASE_URL/wiki`. `JIRA_EMAIL` + `JIRA_API_TOKEN` are used only by paths 2 and 3 below, and count as unset when empty or a placeholder (`replace-with-…`, `your-…`). Never echo tokens.
 
-Never echo tokens. If a required key is missing, output `ERROR: missing <key>` and stop.
+## Access paths: hosted MCP first, API token last
 
-## Access paths: MCP first, REST fallback
+Try the paths in this order and record which one produced each result (`oauth`, `mcp` or `rest`):
 
-Use the first path that works and remember which one produced each result (`mcp`, `oauth` or `rest`):
-
-1. **API-token Atlassian MCP** — `mcp__atlassian__*` (present when `JIRA_API_TOKEN` is configured).
-2. **Hosted Atlassian MCP (browser sign-in, no API key)** — `mcp__atlassian-oauth__*` (the project's hosted server — sign in once from `/mcp`) or `mcp__claude_ai_Atlassian_MCP__*` (your claude.ai connector). Its tools differ from path 1 and every call needs a `cloudId`: call `getAccessibleAtlassianResources` **once**, pick the site whose `url` matches `$JIRA_BASE_URL`, and pass that `cloudId` on every call. If the tools are not listed or the call says authentication is required, the user hasn't signed in yet — do not retry; fall through to path 3 (if it can work) and mention in the output that `/mcp` → `atlassian-oauth` → Authenticate enables the hosted server.
-3. **REST fallback** — `<project_root>/.claude/tools/atlassian_fetch.py`, which uses `JIRA_EMAIL`/`JIRA_API_TOKEN` and returns clean Markdown as JSON:
+1. **Hosted Atlassian MCP (browser sign-in, no API token).** Any connector that exposes `getJiraIssue` and `getConfluenceContent`: `mcp__atlassian-oauth__*`, `mcp__claude_ai_Atlassian_MCP__*`, `mcp__plugin_meta_atlassian__*`, or a claude.ai connector with an id-style prefix (`mcp__<uuid>__getJiraIssue`). If the tools are deferred, load them with ToolSearch (query `getJiraIssue getConfluenceContent`). Pass `cloudId` = the site hostname of `$JIRA_BASE_URL` (e.g. `example.atlassian.net`); without `JIRA_BASE_URL`, call `getAccessibleAtlassianResources` once and use its first site.
+2. **API-token Atlassian MCP** — `mcp__atlassian__*`, only when `JIRA_EMAIL` and `JIRA_API_TOKEN` are set.
+3. **REST fallback** — only when `JIRA_EMAIL` and `JIRA_API_TOKEN` are set: `<project_root>/.claude/tools/atlassian_fetch.py` returns clean Markdown as JSON:
    - `python3 <project_root>/.claude/tools/atlassian_fetch.py jira <KEY>` → `{key, summary, status, priority, assignee, description, subtasks[], comments[] (last 5), issue_links[], remote_links[]}`
    - `python3 <project_root>/.claude/tools/atlassian_fetch.py confluence <URL|ID>` → `{id, title, space, url, markdown, links[], confluence_links[]}`
    - exit `2` + a message on stderr for 401 (bad email/token), 403 (no access), 404 (not found); exit `1` for bad input or a missing credential.
 
-Fall back to the next path when a tool is not in your tool list, or the call errors, or returns nothing. If REST then reports 404, the ticket/page genuinely doesn't exist — record that and continue. Once a first call on a path fails because the tool/server is unavailable (not because of a 404), stay on the next path for all remaining calls instead of retrying. A 401 from REST is fatal for that service: output `ERROR: Atlassian credentials rejected (check JIRA_EMAIL / JIRA_API_TOKEN)` and stop. If no path can work (no token, hosted server not signed in), output `ERROR: Atlassian not connected — run /mcp, choose atlassian-oauth, Authenticate (browser sign-in), or set JIRA_EMAIL/JIRA_API_TOKEN in .claude/.env` and stop.
+Move to the next path when the path's tools are missing, need sign-in, error, or return nothing. Once a path fails because it is unavailable (not a 404), use the next one for every remaining call. A "not found" counts only from path 1, or from path 2/3 when path 1 is unavailable and REST `check` passes: an expired token makes Jira answer 404, not 401. A REST 401 means the token is bad: say so in the output and keep any result from path 1. Stop only when no path works: output `ERROR: Atlassian not connected — sign in to the Atlassian connector (claude.ai connectors, or /mcp → atlassian-oauth → Authenticate), or set JIRA_EMAIL/JIRA_API_TOKEN in .claude/.env`.
 
 ## Step 2 — Fetch the Jira ticket
 
-**Hosted MCP (path 2):** `getJiraIssue` with `{cloudId, issueIdOrKey: <ticket_key>, view: "evidence", responseContentFormat: "markdown"}` gives summary, status, priority, assignee, description, subtasks and issue links. For comments and remote links (not primary tools) use `discover` to find the operation by goal ("list comments of an issue", "remote links of an issue"), then `executeRead({name, cloudId, inputs})`; skip a section if no such operation exists.
+**Hosted MCP (path 1):** `getJiraIssue` with `{cloudId, issueIdOrKey: <ticket_key>, view: "evidence", responseContentFormat: "markdown"}` gives summary, status, priority, assignee, description, subtasks and issue links. Comments: `listJiraIssueComments` (`orderBy: "-created"`, `maxResults: 5`) when present. Remote links: `getJiraIssueRemoteIssueLinks` when present. Otherwise use `discover` to find the operation by goal ("list comments of an issue", "remote links of an issue") and `executeRead({name, cloudId, inputs})`; skip a section if no such operation exists.
 
-**REST fallback:** run `atlassian_fetch.py jira <ticket_key>` and map its fields directly (`description`, `subtasks`, `comments`, `issue_links` are already Markdown/structured; `remote_links` replaces the curl in Step 3b). Otherwise try the MCP tool first:
+**API-token MCP (path 2):**
 
 ```
 tool: mcp__atlassian__jira_get_issue
@@ -58,6 +54,8 @@ tool: mcp__atlassian__jira_search
 args: { "jql": "key = <ticket_key>", "fields": "summary,status,priority,assignee,description,subtasks,comment" }
 ```
 
+**REST fallback (path 3):** run `atlassian_fetch.py jira <ticket_key>` and map its fields directly (`description`, `subtasks`, `comments`, `issue_links` are already Markdown/structured; `remote_links` replaces Step 3b).
+
 Capture: `summary`, `status.name`, `priority.name`, `assignee.displayName`, `description` (Markdown), `subtasks[]`, recent `comment.comments[]` (last 5).
 
 ## Step 3 — Collect Confluence URLs
@@ -66,7 +64,7 @@ Build a `seen` set of Confluence URLs. Collect URLs from all of these sources:
 
 **a) Description scan** — scan the Markdown description for URLs containing `/wiki/spaces/` or starting with `$CONFLUENCE_BASE_URL`. Both `[text](url)` and bare URLs.
 
-**b) Remote links via API** (when the REST fallback fetched the ticket, use its `remote_links` array instead and skip this call):
+**b) Remote links** — from path 1 (Step 2) or the REST `remote_links` array when either was used. Only when neither gave them and a token is set, call:
 
 ```bash
 curl -sS -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
@@ -89,16 +87,18 @@ Deduplicate all discovered URLs into `seen`. If `CONFLUENCE_BASE_URL` is not set
 
 ## Step 4 — Fetch and classify Confluence pages
 
-For each URL in `seen` (cap: 8 depth-1 URLs — note if truncated):
+For each URL in `seen` (cap: 8 depth-1 URLs — note if truncated), use the same path order.
+
+**Hosted MCP (path 1):** `getConfluenceContent` with `{cloudId, content_url: "<url>", detail: "full", content_format: "markdown"}`; scan the returned body for depth-2 URLs.
+
+**API-token MCP (path 2):**
 
 ```
 tool: mcp__atlassian__confluence_get_page
 args: { "url": "<url>" }
 ```
 
-**Hosted MCP (path 2):** `getConfluenceContent` with `{cloudId, content_url: "<url>", detail: "full", content_format: "markdown"}`; scan the returned body for depth-2 URLs.
-
-**REST fallback:** `python3 <project_root>/.claude/tools/atlassian_fetch.py confluence "<url>"` — use its `title` and `markdown`; scan `confluence_links` for depth-2 URLs instead of the body.
+**REST fallback (path 3):** `python3 <project_root>/.claude/tools/atlassian_fetch.py confluence "<url>"` — use its `title` and `markdown`; scan `confluence_links` for depth-2 URLs instead of the body.
 
 On 403/404, record `(access denied / not found)` and continue.
 
@@ -148,7 +148,7 @@ Status: <status>
 Priority: <priority>
 Assignee: <assignee or "unassigned">
 Summary: <one-line summary>
-Source: <atlassian MCP | atlassian OAuth MCP | REST fallback | mixed>
+Source: <hosted MCP | API-token MCP | REST fallback | mixed>
 
 ## Description
 <full Markdown description, no truncation>

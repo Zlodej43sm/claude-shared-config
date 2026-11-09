@@ -30,6 +30,7 @@
 # EXIT  0=ok  1=bad-args  2=http-error
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 PR_ID="" BODY="" FILE_PATH="" LINE=""
 for arg in "$@"; do
@@ -46,10 +47,9 @@ done
 
 API="${GITHUB_API_URL:-https://api.github.com}"
 REPO_BASE="${API}/repos/${GITHUB_OWNER}/${GITHUB_REPO}"
-AUTH="Authorization: Bearer ${GITHUB_TOKEN}"
 
 if [[ -n "$FILE_PATH" && -n "$LINE" ]]; then
-  COMMIT_ID=$(curl -sSL --fail-with-body -H "$AUTH" -H "Accept: application/vnd.github+json" \
+  COMMIT_ID=$(curl -sSL --fail-with-body -K <(curl_bearer_auth "$GITHUB_TOKEN") -H "Accept: application/vnd.github+json" \
     "${REPO_BASE}/pulls/${PR_ID}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["head"]["sha"])')
 
   PAYLOAD=$(python3 - "$BODY" "$FILE_PATH" "$LINE" "$COMMIT_ID" <<'PY'
@@ -58,7 +58,7 @@ body, path, line, commit_id = sys.argv[1:5]
 print(json.dumps({"body": body, "commit_id": commit_id, "path": path, "line": int(line), "side": "RIGHT"}))
 PY
 )
-  RESPONSE=$(curl -sSL --fail-with-body -H "$AUTH" -H "Accept: application/vnd.github+json" \
+  RESPONSE=$(curl -sSL --fail-with-body -K <(curl_bearer_auth "$GITHUB_TOKEN") -H "Accept: application/vnd.github+json" \
     -X POST "${REPO_BASE}/pulls/${PR_ID}/comments" -d "$PAYLOAD")
   ANCHOR="${FILE_PATH}:${LINE}"
 
@@ -69,7 +69,7 @@ body, path = sys.argv[1], sys.argv[2]
 print(json.dumps({"body": f"**`{path}`**\n\n{body}"}))
 PY
 )
-  RESPONSE=$(curl -sSL --fail-with-body -H "$AUTH" -H "Accept: application/vnd.github+json" \
+  RESPONSE=$(curl -sSL --fail-with-body -K <(curl_bearer_auth "$GITHUB_TOKEN") -H "Accept: application/vnd.github+json" \
     -X POST "${REPO_BASE}/issues/${PR_ID}/comments" -d "$PAYLOAD")
   ANCHOR="${FILE_PATH}:file-level"
 
@@ -79,7 +79,7 @@ import json, sys
 print(json.dumps({"body": sys.argv[1]}))
 PY
 )
-  RESPONSE=$(curl -sSL --fail-with-body -H "$AUTH" -H "Accept: application/vnd.github+json" \
+  RESPONSE=$(curl -sSL --fail-with-body -K <(curl_bearer_auth "$GITHUB_TOKEN") -H "Accept: application/vnd.github+json" \
     -X POST "${REPO_BASE}/issues/${PR_ID}/comments" -d "$PAYLOAD")
   ANCHOR="general"
 fi

@@ -12,11 +12,11 @@
 # EXIT  0=ok  1=bad-args  2=not-found (404)  3=other-http-error
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 PR_NUMBER="${1:?ERROR: gh_pr_diffstat.sh requires PR_NUMBER as \$1}"
 API="${GITHUB_API_URL:-https://api.github.com}"
 BASE="${API}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/pulls/${PR_NUMBER}/files"
-AUTH="Authorization: Bearer ${GITHUB_TOKEN}"
 
 TMP_PAGE=$(mktemp)
 trap 'rm -f "$TMP_PAGE"' EXIT
@@ -24,7 +24,7 @@ trap 'rm -f "$TMP_PAGE"' EXIT
 PAGE=1
 ALL_FILES="[]"
 while :; do
-  HTTP_STATUS=$(curl -sSL -H "$AUTH" -H "Accept: application/vnd.github+json" \
+  HTTP_STATUS=$(curl -sSL -K <(curl_bearer_auth "$GITHUB_TOKEN") -H "Accept: application/vnd.github+json" \
     -w "%{http_code}" -o "$TMP_PAGE" \
     "${BASE}?per_page=100&page=${PAGE}")
 

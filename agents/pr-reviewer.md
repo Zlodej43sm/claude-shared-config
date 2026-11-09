@@ -47,6 +47,8 @@ Read `CLAUDE.md` **first** (before any API calls). Extract:
 - Any cross-service contracts called out explicitly (Kafka topics, S3 paths, Avro schemas, shared libraries).
 - Test changes in any language: if `.claude/skills/test-design/SKILL.md` exists, read it and flag duplicate, implied, library-guarantee and wrong-level tests as should-fix, naming the test that already covers each.
 - Backend code standards: if `.claude/skills/backend-review/SKILL.md` exists (shared skill), read it and the `backend-implementation` skill it points to, then the project's coding-standards and style docs it names; apply its Step 2 checks (layering, contracts, tests, naming/style) and its severity levels to every backend file.
+- Front-end / UI code: when the `frontend` bucket is non-empty and `.claude/skills/frontend-review/SKILL.md` exists (shared skill), read it, run its Step 0 to detect the UI stack (React, Next.js, Angular, Vue, Svelte, web components, plain HTML/CSS, mobile…), read the matching `references/*.md`, then apply its Step 2 checks (API data contract and release order, states, accessibility, i18n, SSR/hydration, state and data, performance, security, design system, analytics, tests, code quality) and its severity levels to every file in the `frontend` bucket. Record the detected stack in the review's `Context`. For a UI-only PR this is the main review; the `backend-review` checks don't apply to UI files.
+- Claude Code config: when the `claude-config` bucket is non-empty and `.claude/skills/security-audit/SKILL.md` exists (shared skill), read it and apply its Step 2A checks (§1 hardcoded secrets, §2 project-specific identifiers in shared files, §3 values that belong in a project-local `.env`, §4 writes into the shared tree, §5 permission/tool scopes broader than the file needs) to every file in that bucket. In local mode also run its scanner the way its Steps 0–1 do (`security_audit_scan.py --mode=config` from `.claude/tools/` or `tools/`, against the repo root) and keep only hits in changed files. Severity: a live secret, private key or credential in a URL is `blocking`; a non-portable identifier, a `.env`-shaped literal, a write into the shared tree or an over-broad scope is `should-fix (decision needed)`; an identifier documented as an intentional org-wide default is a `suggestion`. Never quote a secret value: use its first 4 / last 4 characters, as the skill does.
 - Documents: if `.claude/skills/doc-review/SKILL.md` exists (shared skill), read it and apply its Step 2 checks (§A–§I: durable vs transitory with no history or ticket keys, diagrams/tables over prose, plain wording, claims verified against the owning repo's default branch (unmerged behaviour is a finding), reader lifecycle questions, design failure modes, fan-out to other canonical docs, one home per rule at the right level of detail, docs/comments/tests/config in the PR agreeing with each other) and its severity levels to every file in the `docs` bucket. For a docs-only PR this is the main review.
 - Review checklists and convention docs for a kind of change, e.g. a DB migration checklist or schema conventions. Look in the repo's `CLAUDE.md`, in the workspace-root `CLAUDE.md` above it if one exists (multi-repo workspaces keep shared rules there), and in project-local skills under `.claude/skills/` whose description covers that change (you cannot invoke skills: read their `SKILL.md`). Record each source's path and which changed files trigger it; read the docs it links before Step 3.
 
@@ -64,7 +66,7 @@ Load credentials:
 set -a; . .claude/.env; set +a
 ```
 
-Required: `JIRA_WORKSPACE`, `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, plus — depending on the `host` you were given — either `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN` (`host=bitbucket`) or `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`host=github`). Missing key → fail loud, stop. Never echo tokens.
+Required — depending on the `host` you were given — either `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN` (`host=bitbucket`) or `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`host=github`). Missing key → fail loud, stop. Never echo tokens. Jira/Confluence keys are optional: the caller (`pr-review`) pre-fetches Jira and Confluence through the hosted Atlassian MCP connector. Run the Jira/Confluence curl calls below only when that context is missing and `JIRA_EMAIL` / `JIRA_API_TOKEN` are set (not placeholders); otherwise skip them and note "Jira context not available" in the Context section.
 
 Optional: `CONFLUENCE_BASE_URL` (same Atlassian tenant as `$JIRA_BASE_URL` — typically `$JIRA_BASE_URL/wiki/spaces`). If set and pre-fetched context was not provided, Confluence pages linked from the Jira ticket or PR description are fetched and used for both AC coverage and logic review. If absent, skip Confluence fetching and note it in the Context section.
 
@@ -151,11 +153,13 @@ Each file from the diffstat (or local file list) lands in **one or more** bucket
 
 | Bucket | Default patterns |
 |--------|-----------------|
-| `backend` | `src/**` (non-test), `app/**` (non-test) |
+| `backend` | `src/**` (non-test), `app/**` (non-test) — server code only |
+| `frontend` | `**/*.{jsx,tsx,vue,svelte}`, `**/*.component.{ts,html,scss,css}`, `**/*.{css,scss,sass,less}`, `**/*.html`, `**/*.stories.*`, `components/**`, `pages/**`, `app/**` in a Next.js/Nuxt app, `domain/**` / `src/**` of a UI repo (non-test), translation files (`translations/**`, `locales/**`, `i18n/**`), client GraphQL documents and schema (`**/*.gql.ts`, `**/*.graphql` in a UI repo). A repo whose `package.json` has a UI framework (react, next, @angular/core, vue, nuxt, svelte, solid-js, lit, react-native) routes its non-test source here instead of `backend` |
 | `schemas` | `**/*.avsc`, `**/*.proto`, `**/*.json` (schema files), `**/schemas/**` |
 | `migrations` | `migrations/**`, `**/migrations/**`, `db/migrate/**`, `**/*.sql`, `**/schema.prisma` |
 | `tests` | `**/test_*.py`, `**/*_test.py`, `tests/**`, `**/test/**`, `**/*.test.ts`, `**/*.spec.*` |
 | `devops` | `docker/**`, `Dockerfile*`, `docker-compose*.yml`, `**/pipelines.yml`, `pyproject.toml`, `package.json`, `*.lock`, `*.cfg`, `.env.example` |
+| `claude-config` | `.claude/**`, and in a shared Claude config repo `skills/**`, `agents/**`, `tools/**`, `hooks/**`, `workflows/**`; `**/mcp.json*`, `**/.mcp.json`, `**/settings*.json*`, `**/.env.example`, `**/env.example` |
 | `docs` | `**/*.md`, `docs/**` |
 | `other` | Anything left; route to the bucket whose imports it touches |
 
@@ -167,7 +171,7 @@ Override these with actual paths from the CLAUDE.md layout section.
 
 Read actual files from the working tree (Read tool). In PR mode, if the working tree `HEAD` doesn't match `source_commit_hash`, warn and continue against the working tree.
 
-Apply **all** of the rules below. Every finding gets a severity: `blocking` · `suggestion` · `nit` · `test-gap` · `question`.
+Apply **all** of the rules below. Every finding gets a severity: `blocking` · `should-fix (decision needed)` · `suggestion` · `nit` · `test-gap` · `question`.
 
 ### Correctness
 
@@ -213,8 +217,9 @@ Apply **all** of the rules below. Every finding gets a severity: `blocking` · `
 
 ### Security
 
-- Injection, missing auth checks, secrets in code/logs, unsafe deserialization, SSRF, path traversal.
-- For deep dives, suggest `/security-review`.
+- Changed code in any bucket: if `.claude/skills/security-audit/SKILL.md` exists (shared skill), apply its Step 2B checks (§6–§14) to the changed lines and the code paths they reach. A finding needs the source, path and missing guard that step asks for; an unproven lead is not reported. Map its severities: critical → `blocking`, high → `should-fix (decision needed)`, hardening → `suggestion`. If the skill is missing, check injection, missing auth or ownership checks, secrets in code or logs, unsafe deserialization, SSRF and path traversal.
+- Changed Claude Code config (`claude-config` bucket): apply the skill's Step 2A checks as described in Step 0.
+- For a full audit of the whole repo, suggest `/security-audit [path]`.
 
 ### Observability
 
@@ -321,7 +326,8 @@ Format your final message **exactly** as shown below. Rules:
 - Each finding gets a global sequential label `C1`, `C2`, … that does **not** reset across sections.
 - Place a `---` horizontal rule **between every pair of findings** within a section (not before the first, not after the last).
 - Place a `---` horizontal rule **between every top-level section**.
-- Severity: prefix the severity word with an emoji — 🔴 `blocking`, 🟡 `suggestion`, ⚪ `nit`, 🔵 `test-gap`, ❓ `question`.
+- Severity: prefix the severity word with an emoji — 🔴 `blocking`, 🟠 `should-fix (decision needed)`, 🟡 `suggestion`, ⚪ `nit`, 🔵 `test-gap`, ❓ `question`.
+- `should-fix (decision needed)` is for something that must change but needs the author or product to choose how first (which rule is right, should two places agree). Only these findings are written the way a human reviewer would: a short question in plain words with only the facts needed to answer it, plus at most one suggested way forward, and no labels, emoji, bold or headings in the body. The label stays in the finding header. Every other severity keeps its usual format.
 - Reviewer comments: group each reviewer's comments by file path under a `####` sub-header; put general (non-inline) comments under `#### General`. Separate file groups within one reviewer with `---`. Separate reviewer blocks with `---`.
 
 ### Line anchor rules (strictly enforced)
@@ -427,6 +433,14 @@ PR line: <link from pr_line_links.py, e.g. https://github.com/<owner>/<repo>/pul
 
 ---
 
+## Frontend                      ← stack from frontend-review Step 0, e.g. "React 18 + Next.js Pages Router, Apollo, Emotion, react-intl"
+
+**C3a** — `components/Modal/Modal.tsx:30` — 🟡 should-fix
+
+<finding>
+
+---
+
 ## Schemas
 
 **C3** — `schemas/avsc/Envelope.avsc:15` — 🔴 blocking
@@ -458,6 +472,14 @@ Source: `<path of the project's DB checklist, or "none found: generic checks onl
 **C5** — `bitbucket-pipelines.yml:85` — 🔴 blocking
 
 <finding>
+
+---
+
+## Claude config                 ← omit entirely if the `claude-config` bucket is empty
+
+**C6** — `skills/foo/SKILL.md:12` — 🟠 should-fix (decision needed)
+
+<finding: security-audit category, e.g. "§2 project-specific identifier">
 
 ---
 
@@ -529,7 +551,7 @@ Anything you need the author to clarify before signing off, OR answers derived f
 
 In **local mode**, replace the first line with `# Local review: <branch> → <destination>` and omit approvals / link lines.
 
-Severity tags (one per finding, always include the emoji): 🔴 `blocking` · 🟡 `suggestion` · ⚪ `nit` · 🔵 `test-gap` · ❓ `question`.
+Severity tags (one per finding, always include the emoji): 🔴 `blocking` · 🟠 `should-fix (decision needed)` · 🟡 `suggestion` · ⚪ `nit` · 🔵 `test-gap` · ❓ `question`.
 
 ---
 

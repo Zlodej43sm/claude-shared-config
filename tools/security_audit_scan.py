@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 """
-security_audit_scan — mechanical first pass over a shared Claude Code config
-tree (skills/agents/tools/hooks/workflows + mcp.json + settings.json +
-env template). Finds high-confidence secret shapes, filesystem-write call
-sites, and declared tool/permission scopes. Does NOT judge portability or
-justify scope — that requires reading the file in context, which is the
-security-audit skill's job, not this script's.
+security_audit_scan — mechanical first pass for the security-audit skill.
+
+--mode=config (default): a Claude Code config tree (skills/agents/tools/hooks/
+workflows + mcp.json + settings.json + their templates + env template; for a
+shared source-of-truth repo also bin/ and README.md). Finds high-confidence
+secret shapes, filesystem-write call sites, and declared tool/permission scopes.
+
+--mode=code: an application's source (files git does not ignore when the root is a git
+repo, minus .claude/ and vendored/build dirs). Finds secret shapes, risky sink
+call sites per category, HTTP route definitions and dependency manifests.
+
+Neither mode judges anything — whether a hit is reachable, exploitable or
+already guarded needs the file read in context, which is the skill's job.
 
 SCHEMA_IN
-  argv[1]  path to the root directory to scan (required)
+  argv     [--mode=config|code] <root-dir>
 
-SCHEMA_OUT  stdout JSON
+SCHEMA_OUT  stdout JSON, --mode=config
   {
     "root": "<resolved absolute path>",
     "files_scanned": ["<path relative to root>", ...],
@@ -21,7 +28,7 @@ SCHEMA_OUT  stdout JSON
       {"file": "...", "line": N, "text": "<the matching line, stripped>"}
     ],
     "scope_findings": [
-      {"file": "...", "kind": "agent-frontmatter" | "mcp-server" | "settings-hook",
+      {"file": "...", "kind": "agent-frontmatter" | "mcp-server" | "settings-hook" | "settings-permissions",
        "detail": {...}}
     ],
     "identifier_candidates": [
@@ -29,12 +36,30 @@ SCHEMA_OUT  stdout JSON
     ]
   }
 
-EXIT  0=ok  1=root does not exist / is not a directory
+SCHEMA_OUT  stdout JSON, --mode=code
+  {
+    "root": "...", "mode": "code",
+    "files_scanned": [...],
+    "secret_findings": [ same shape as config mode, plus "test": bool ],
+    "sink_findings": [
+      {"file": "...", "line": N, "category": "injection" | "deserialization" | "ssrf" |
+       "path-traversal" | "xss" | "crypto" | "tls" | "auth-token" | "security-config" |
+       "sensitive-logging" | "open-redirect" | "container",
+       "pattern": "<name>", "text": "<line, secrets masked, max 200 chars>", "test": bool}
+    ],
+    "route_candidates": [{"file": "...", "line": N, "text": "..."}],
+    "dependency_manifests": ["<path relative to root>", ...]
+  }
+  "test" is true for files under test/tests/__tests__/spec dirs or named
+  test_*, *_test.*, *.test.*, *.spec.*.
+
+EXIT  0=ok  1=bad usage / root does not exist / is not a directory
 """
 from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -48,8 +73,14 @@ SKIP_FILE_SUFFIXES = (".lock", ".log", ".min.js")
 INCLUDE_DIRNAMES = {"skills", "agents", "tools", "hooks", "workflows", "commands", "output-styles"}
 INCLUDE_ROOT_FILES = {
     "mcp.json", ".mcp.json", "mcp.json.template", "settings.json",
-    ".env.example", "env.example", "CLAUDE.md",
+    "settings.json.template", ".env.example", "env.example", "CLAUDE.md",
 }
+# Only in a shared source-of-truth repo (skills/ at the root): its README and
+# bin/ scripts ship to every linked project. A linked project's own README is
+# project-specific by design, so it is not scanned.
+SHARED_REPO_DIRNAMES = {"bin"}
+SHARED_REPO_ROOT_FILES = {"README.md"}
+SETTINGS_FILES = ("settings.json", "settings.json.template")
 
 MAX_FILE_BYTES = 2_000_000
 
@@ -103,7 +134,7 @@ SECRET_PATTERNS = [
     (
         "generic_secret_assignment",
         re.compile(
-            r"(?i)\b(?:api[_-]?key|secret|password|passwd|token|access[_-]?key|private[_-]?key|credential)s?\s*[:=]\s*[\"']?([A-Za-z0-9/+_.\-]{12,})[\"']?"
+            r"(?i)\b(?:api[_-]?key|secret|password|passwd|token|access[_-]?key|private[_-]?key|credential)s?\s*[:=]\s*[\"']?([A-Za-z0-9/+_.\-]{12,})(?![A-Za-z0-9/+_.\-]*\()[\"']?"
         ),
         True,
     ),
@@ -140,8 +171,12 @@ def iter_target_files(root: Path):
         seen.add(resolved)
         return path
 
+    shared_repo = (root / "skills").is_dir()
+
     for base in bases:
-        for dirname in sorted(INCLUDE_DIRNAMES):
+        dirnames = INCLUDE_DIRNAMES | (SHARED_REPO_DIRNAMES if shared_repo and base == root else set())
+        root_files = INCLUDE_ROOT_FILES | (SHARED_REPO_ROOT_FILES if shared_repo and base == root else set())
+        for dirname in sorted(dirnames):
             d = base / dirname
             if not d.is_dir():
                 continue
@@ -154,7 +189,7 @@ def iter_target_files(root: Path):
                     continue
                 if emit(path):
                     yield path
-        for name in sorted(INCLUDE_ROOT_FILES):
+        for name in sorted(root_files):
             f = base / name
             if f.is_file() and emit(f):
                 yield f
@@ -246,14 +281,205 @@ def scan_settings_json(rel: str, path: Path, out: list[dict]) -> None:
         out.append({"file": rel, "kind": "settings-permissions", "detail": perms})
 
 
+# ---------------------------------------------------------------------------
+# --mode=code
+# ---------------------------------------------------------------------------
+
+CODE_SKIP_DIRS = SKIP_DIRS - {"plans", "reviews", "worktrees"} | {
+    ".claude", "vendor", "third_party", "coverage", ".next", ".nuxt", "out",
+    "target", ".terraform", ".gradle", "bower_components", "site-packages",
+}
+CODE_SUFFIXES = {
+    ".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".vue", ".svelte",
+    ".go", ".java", ".kt", ".scala", ".rb", ".php", ".cs", ".rs", ".sh",
+    ".html", ".htm", ".njk", ".hbs", ".ejs", ".jinja", ".j2",
+    ".yml", ".yaml", ".json", ".toml", ".ini", ".cfg", ".conf", ".properties",
+    ".tf", ".sql", ".graphql", ".gql",
+}
+CODE_NAMES = {"Dockerfile", "docker-compose.yml", "docker-compose.yaml", "Makefile", ".env.example", "env.example"}
+MANIFEST_NAMES = {
+    "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb",
+    "requirements.txt", "requirements-dev.txt", "pyproject.toml", "poetry.lock", "uv.lock", "Pipfile", "Pipfile.lock",
+    "go.mod", "go.sum", "pom.xml", "build.gradle", "build.gradle.kts", "Gemfile", "Gemfile.lock",
+    "composer.json", "composer.lock", "Cargo.toml", "Cargo.lock",
+}
+TEST_DIR_PARTS = {"test", "tests", "__tests__", "spec", "specs", "e2e", "features", "fixtures", "__mocks__"}
+TEST_NAME_RE = re.compile(r"(^test_.*|.*_test\.[^.]+|.*\.(test|spec)\.[^.]+)$")
+
+# (category, name, regex). One hit per line per pattern. These are leads, not
+# verdicts: the skill decides reachability and whether a guard already exists.
+_HTTP_CALL = r"(?:\bfetch|\baxios(?:\.(?:get|post|put|patch|delete|request))?|\bgot(?:\.\w+)?|\bsuperagent\.\w+|\bhttps?\.(?:get|request)|\brequests\.(?:get|post|put|patch|delete|request|head)|\bhttpx\.(?:get|post|put|patch|delete|request|stream)|\burlopen|\bnew\s+URL)\("
+_USER_INPUT = r"(?:\breq(?:uest)?\.(?:params|query|body|args|form|files|GET|POST|headers|cookies)\b|\bctx\.(?:params|query|request)\b|\bevent\.(?:body|queryStringParameters|pathParameters)\b|@(?:Param|Query|Body)\()"
+SINK_PATTERNS = [
+    # injection
+    ("injection", "sql_interpolation", re.compile(r"(?i)(?:f[\"']|`|[\"'])[^\"'`]*\b(?:select\s.+\sfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b[^\"'`]*(?:\{|\$\{|%s|%\(|\"\s*\+|'\s*\+|`\s*\+)")),
+    ("injection", "sql_format_call", re.compile(r"(?i)\b(?:select|insert|update|delete)\b.*[\"']\s*(?:%\s*[\w(]|\.format\()")),
+    ("injection", "raw_query_api", re.compile(r"\.(?:raw|\$queryRawUnsafe|\$executeRawUnsafe|unsafe)\(|\bsequelize\.literal\(|\bknex\.raw\(|\btext\(\s*f[\"']")),
+    ("injection", "shell_command", re.compile(r"\bchild_process\b|\bexecSync\(|\bexec\(\s*[`\"'\w]|\bspawn(?:Sync)?\([^)]*shell\s*:\s*true|\bsubprocess\.\w+\([^)]*shell\s*=\s*True|\bos\.(?:system|popen)\(|Runtime\.getRuntime\(\)\.exec|\bProcessBuilder\(")),
+    ("injection", "dynamic_eval", re.compile(r"(?<![\w.])eval\(|\bnew\s+Function\(|\bvm\.runIn\w*\(|\bsetTimeout\(\s*[\"'`]|\bexec\(\s*compile\(|\b__import__\(\s*(?![\"'])|(?:^|[;&|]\s*)eval\s+[\"'$]")),
+    ("injection", "nosql_operator", re.compile(r"[\"']\$where[\"']|\$where\s*:")),
+    ("injection", "template_from_input", re.compile(r"\brender_template_string\(|\bTemplate\(\s*" + _USER_INPUT)),
+    # deserialization
+    ("deserialization", "unsafe_deserialize", re.compile(r"\bpickle\.loads?\(|\bcPickle\.loads?\(|\bmarshal\.loads?\(|\bshelve\.open\(|\bjsonpickle\.decode\(|\bdill\.loads?\(|\bObjectInputStream\(|\bunserialize\(|node-serialize|\byaml\.(?:load|load_all)\((?![^)]*Safe)|\bYAML\.load\(|\btorch\.load\((?![^)]*weights_only\s*=\s*True)")),
+    # ssrf / outbound
+    ("ssrf", "outbound_with_input", re.compile(_HTTP_CALL + r"[^)\n]*" + _USER_INPUT)),
+    ("ssrf", "outbound_templated_url", re.compile(_HTTP_CALL + r"\s*(?:`[^`]*\$\{|f[\"'][^\"']*\{)")),
+    # path traversal / files
+    ("path-traversal", "file_access_with_input", re.compile(r"(?:readFile(?:Sync)?|createReadStream|writeFile(?:Sync)?|sendFile|res\.download|\bopen|send_file|send_from_directory|FileResponse|Path|path\.(?:join|resolve)|os\.path\.join|unlink(?:Sync)?|rm(?:Sync)?)\([^)\n]*" + _USER_INPUT)),
+    ("path-traversal", "archive_extract", re.compile(r"\.extractall\(|\bunzipper\b|\badm-zip\b|\btar\.x\(|\bextract-zip\b")),
+    # xss / output
+    ("xss", "raw_html_sink", re.compile(r"dangerouslySetInnerHTML|\.innerHTML\s*=|\.outerHTML\s*=|\binsertAdjacentHTML\(|\bv-html\b|\{@html\b|\[innerHTML\]|bypassSecurityTrust\w*\(|\bdocument\.write\(|\|\s*safe\b|\bmark_safe\(|\bMarkup\(|<%-")),
+    ("open-redirect", "redirect_with_input", re.compile(r"(?:\bredirect|\bres\.redirect|\bRedirectResponse|\bHttpResponseRedirect|window\.location(?:\.href)?\s*=)\s*\(?[^)\n;]*" + _USER_INPUT)),
+    # crypto
+    ("crypto", "weak_hash", re.compile(r"(?i)\bhashlib\.(?:md5|sha1)\(|createHash\(\s*[\"'](?:md5|sha1)[\"']|MessageDigest\.getInstance\(\s*\"(?:MD5|SHA-?1)\"|\bmd5\(|\bsha1\(")),
+    ("crypto", "weak_cipher", re.compile(r"(?i)\bcreateCipher\(|\b(?:DES|3DES|RC4|Blowfish)\b|\bAES/ECB\b|\bMODE_ECB\b|['\"]aes-\d+-ecb['\"]")),
+    ("crypto", "non_crypto_random_for_secret", re.compile(r"(?i)(?:Math\.random\(\)|\brandom\.(?:random|randint|choice|choices|getrandbits)\(|\bnew\s+Random\().*\b(?:token|secret|password|passwd|nonce|otp|salt|session|apikey|api_key|reset|verification|invite)\b|\b(?:token|secret|password|nonce|otp|salt|session|reset|verification|invite)\w*\s*[=:].*(?:Math\.random\(\)|\brandom\.(?:random|randint|choice|choices|getrandbits)\()")),
+    # tls
+    ("tls", "tls_verification_off", re.compile(r"\bverify\s*=\s*False\b|rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED|InsecureSkipVerify\s*:\s*true|_create_unverified_context|\bCERT_NONE\b|check_hostname\s*=\s*False|strictSSL\s*:\s*false")),
+    ("tls", "plain_http_url", re.compile(r"[\"'`]http://(?!localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|www\.w3\.org|schemas\.|json-schema\.org|example\.)[^\"'`\s]+")),
+    # auth tokens
+    ("auth-token", "jwt_unverified", re.compile(r"(?i)algorithms?\s*[:=]\s*\[?\s*[\"']none[\"']|verify_signature[\"']?\s*:\s*False|jwt\.decode\([^)]*verify\s*=\s*False|ignoreExpiration\s*:\s*true|\bjwt\.decode\((?![^)]*(?:algorithms|key|secret))|\.decode\(\s*\w+\s*,\s*options\s*=\s*\{[^}]*verify")),
+    ("auth-token", "timing_unsafe_compare", re.compile(r"(?i)\b(?:token|secret|signature|hmac|api_?key|password|digest)\w*\s*(?:===?|!==?)\s*\w+|\b\w+\s*(?:===?|!==?)\s*\w*(?:token|secret|signature|hmac|api_?key|digest)\b")),
+    # security config
+    ("security-config", "cors_wildcard", re.compile(r"(?i)origin\s*:\s*[\"']\*[\"']|origin\s*:\s*true\b|Access-Control-Allow-Origin[\"']?\s*[,:]\s*[\"']\*|allow_origins\s*=\s*\[\s*[\"']\*|CORS_ALLOW_ALL_ORIGINS\s*=\s*True|AllowAnyOrigin\(")),
+    ("security-config", "cookie_flags_off", re.compile(r"(?i)httpOnly\s*[:=]\s*false|\bsecure\s*[:=]\s*false|sameSite\s*[:=]\s*[\"']none[\"']|SESSION_COOKIE_SECURE\s*=\s*False|CSRF_COOKIE_SECURE\s*=\s*False")),
+    ("security-config", "debug_enabled", re.compile(r"\bDEBUG\s*=\s*True\b|\.run\([^)]*debug\s*=\s*True|app\.debug\s*=\s*True")),
+    ("security-config", "csrf_disabled", re.compile(r"(?i)csrf_exempt|csrf\(\)\.disable\(|WTF_CSRF_ENABLED\s*=\s*False|csrf\s*:\s*false")),
+    ("security-config", "bind_all_interfaces", re.compile(r"[\"']0\.0\.0\.0[\"']")),
+    # logging
+    ("sensitive-logging", "secret_in_log", re.compile(r"(?i)(?:\blog(?:ger)?|\bconsole|\blogging|\bprint)\b[\w.]*\(.*\b(?:password|passwd|token|secret|authorization|cookie|api_?key|card_?number|cvv|iban|ssn)\b")),
+    # containers
+    ("container", "docker_latest_or_root", re.compile(r"^\s*FROM\s+\S+:latest\b|^\s*FROM\s+[^\s:@]+\s*(?:AS\s+\w+)?\s*$|^\s*USER\s+root\b", re.IGNORECASE)),
+]
+TEMPLATE_SUFFIXES = {".hbs", ".handlebars", ".mustache", ".html", ".htm"}
+TEMPLATE_RAW_RE = re.compile(r"\{\{\{[^}]+\}\}\}")  # Handlebars/Mustache unescaped output
+ROUTE_RE = re.compile(
+    r"@(?:\w+\.)?(?:route|get|post|put|patch|delete|api_route|websocket)\(|"
+    r"\b(?:app|router|server|api|route[rs]?)\.(?:get|post|put|patch|delete|all|use|route)\(\s*[\"'`/]|"
+    r"@(?:Get|Post|Put|Patch|Delete|Request)Mapping\b|@(?:Get|Post|Put|Patch|Delete|All)\(|"
+    r"\bpath\(\s*[\"']|\bre_path\(|\bHandleFunc\(|\bfastify\.(?:get|post|put|patch|delete|route)\(|"
+    r"\bexport\s+(?:async\s+)?function\s+(?:GET|POST|PUT|PATCH|DELETE)\b|\bResolver\(|@(?:Query|Mutation)\("
+)
+
+
+def mask_secrets(text: str) -> str:
+    for _name, pattern, has_group in SECRET_PATTERNS:
+        def _sub(m):
+            value = m.group(1) if has_group else m.group(0)
+            return m.group(0) if is_placeholder(value) else m.group(0).replace(value, redact(value))
+        text = pattern.sub(_sub, text)
+    return text
+
+
+def is_test_path(rel: Path) -> bool:
+    return any(p.lower() in TEST_DIR_PARTS for p in rel.parts[:-1]) or bool(TEST_NAME_RE.match(rel.name))
+
+
+def _has_shebang(path: Path) -> bool:
+    try:
+        with path.open("rb") as fh:
+            return fh.read(2) == b"#!"
+    except OSError:
+        return False
+
+
+def iter_code_files(root: Path):
+    rels: list[Path] | None = None
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            capture_output=True, check=True,
+        ).stdout.decode("utf-8", "ignore")
+        rels = [Path(p) for p in out.split("\0") if p]
+    except (OSError, subprocess.CalledProcessError):
+        rels = None
+    if rels is None:
+        rels = [p.relative_to(root) for p in root.rglob("*") if p.is_file()]
+    own = Path(__file__).resolve()
+    for rel in sorted(set(rels)):
+        if any(part in CODE_SKIP_DIRS for part in rel.parts):
+            continue
+        if (root / rel).resolve() == own:  # its pattern table matches every rule
+            continue
+        name = rel.name
+        if name in SKIP_FILES or name.endswith(SKIP_FILE_SUFFIXES):
+            continue
+        if rel.suffix in CODE_SUFFIXES or name in CODE_NAMES or name.startswith("Dockerfile") or name in MANIFEST_NAMES or (not rel.suffix and _has_shebang(root / rel)):
+            path = root / rel
+            if path.is_file():
+                yield rel, path
+
+
+def run_code_mode(root: Path) -> dict:
+    files_scanned: list[str] = []
+    secret_findings: list[dict] = []
+    sink_findings: list[dict] = []
+    route_candidates: list[dict] = []
+    manifests: list[str] = []
+
+    for rel, path in iter_code_files(root):
+        rel_s = str(rel)
+        if rel.name in MANIFEST_NAMES:
+            manifests.append(rel_s)
+            if rel.name not in {"package.json", "pyproject.toml", "requirements.txt", "requirements-dev.txt", "Pipfile"}:
+                continue  # lockfiles: list only
+        lines = read_lines(path)
+        if lines is None:
+            continue
+        files_scanned.append(rel_s)
+        test = is_test_path(rel)
+
+        found: list[dict] = []
+        scan_secrets(rel_s, lines, found)
+        for f in found:
+            f["test"] = test
+        secret_findings.extend(found)
+
+        for lineno, line in enumerate(lines, start=1):
+            if len(line) > 1000:  # minified or generated
+                continue
+            hits = [(c, n) for c, n, pat in SINK_PATTERNS if pat.search(line)]
+            if rel.suffix in TEMPLATE_SUFFIXES and TEMPLATE_RAW_RE.search(line):
+                hits.append(("xss", "raw_html_sink"))
+            for category, name in hits:
+                sink_findings.append({
+                    "file": rel_s, "line": lineno, "category": category, "pattern": name,
+                    "text": mask_secrets(line.strip())[:200], "test": test,
+                })
+            if not test and ROUTE_RE.search(line):
+                route_candidates.append({"file": rel_s, "line": lineno, "text": mask_secrets(line.strip())[:200]})
+
+    return {
+        "root": str(root),
+        "mode": "code",
+        "files_scanned": files_scanned,
+        "secret_findings": secret_findings,
+        "sink_findings": sink_findings,
+        "route_candidates": route_candidates,
+        "dependency_manifests": manifests,
+    }
+
+
 def main() -> int:
-    if len(sys.argv) < 2:
-        sys.stderr.write("usage: security_audit_scan.py <root-dir>\n")
+    usage = "usage: security_audit_scan.py [--mode=config|code] <root-dir>\n"
+    mode = "config"
+    positional: list[str] = []
+    for arg in sys.argv[1:]:
+        if arg.startswith("--mode="):
+            mode = arg.split("=", 1)[1]
+        else:
+            positional.append(arg)
+    if mode not in ("config", "code") or len(positional) != 1:
+        sys.stderr.write(usage)
         return 1
-    root = Path(sys.argv[1]).expanduser().resolve()
+    root = Path(positional[0]).expanduser().resolve()
     if not root.is_dir():
         sys.stderr.write(f"not a directory: {root}\n")
         return 1
+
+    if mode == "code":
+        print(json.dumps(run_code_mode(root)))
+        return 0
 
     files_scanned: list[str] = []
     secret_findings: list[dict] = []
@@ -276,7 +502,7 @@ def main() -> int:
             parse_agent_frontmatter(rel, lines, scope_findings)
         if path.name in ("mcp.json", "mcp.json.template"):
             scan_mcp_json(rel, path, scope_findings)
-        if path.name == "settings.json":
+        if path.name in SETTINGS_FILES:
             scan_settings_json(rel, path, scope_findings)
 
     print(json.dumps({

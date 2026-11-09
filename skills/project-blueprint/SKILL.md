@@ -61,9 +61,9 @@ the actual execution plan rather than improvising it inline here.
 set -a; . ./.claude/.env; set +a
 ```
 
-Required only if a ticket key was given: `JIRA_WORKSPACE`, `JIRA_BASE_URL`, `JIRA_EMAIL`,
-`JIRA_API_TOKEN`. Not required for free-text input — don't block on Jira credentials for a
-request that never needs Jira.
+No Jira key is required: tickets are read through the hosted Atlassian MCP connector first and
+the API token only as a fallback (`agents/jira-context.md` → "Access paths"). Never block on a missing or placeholder
+`JIRA_API_TOKEN`.
 
 Resolve the target repository as `$CLAUDE_PROJECT_DIR`, else `git rev-parse
 --show-toplevel`, else cwd — the same resolution `project-overview` uses. State the resolved
@@ -253,7 +253,7 @@ would be empty; never more without a clear reason):
 **1. The README** (`<target-repo>/README.md`). If a README already exists with unrelated
 content, preserve it and add a clearly separated, well-labelled section for this blueprint
 rather than overwriting; if the whole repo is dedicated to this feature (a genuinely
-green-field service, as in the `art-public-api`/MA-225 precedent), the README *is* the
+green-field service built for this one ticket), the README *is* the
 blueprint — no separate wrapper section is needed. Structure:
 
 ```markdown

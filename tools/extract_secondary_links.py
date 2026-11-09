@@ -15,8 +15,8 @@ SCHEMA_IN
 
 SCHEMA_OUT  stdout JSON
   {
-    "new_jira_keys":     [{ "key": "MA-21", "via": "issue-link:MA-22" }, ...],
-    "new_conf_page_ids": [{ "id": "67890",  "via": "jira-remotelink:MA-22" }, ...]
+    "new_jira_keys":     [{ "key": "PROJ-21", "via": "issue-link:PROJ-22" }, ...],
+    "new_conf_page_ids": [{ "id": "67890",  "via": "jira-remotelink:PROJ-22" }, ...]
   }
   Side-effects: appends new entries to $PR_REVIEW_CACHE_DIR/link_registry.json
 

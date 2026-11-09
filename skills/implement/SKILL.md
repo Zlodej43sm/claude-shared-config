@@ -26,13 +26,10 @@ Parse: everything before `--` is the ticket key; everything after is the related
 ## Step 0 — Load env and validate
 
 ```bash
-set -a; . ./.claude/.env; set +a
+set -a; [ -f ./.claude/.env ] && . ./.claude/.env; set +a
 ```
 
-Required: `JIRA_WORKSPACE`, `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`.
-Optional: `CONFLUENCE_BASE_URL`.
-
-If any required key is missing or has a placeholder value (`replace-with-...`, `your-...`), tell the user which key to set and stop.
+No key is required: the `jira-context` agent reads Jira through the hosted Atlassian MCP connector first and uses `JIRA_EMAIL` / `JIRA_API_TOKEN` only as a fallback (order: `agents/jira-context.md` → "Access paths"). `JIRA_WORKSPACE` is needed only to resolve a bare number; without it, ask for the full key. Never stop because the API token is missing or a placeholder.
 
 Resolve ticket key: if the user provided only digits, prepend `$JIRA_WORKSPACE-`.
 

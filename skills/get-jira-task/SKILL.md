@@ -20,7 +20,7 @@ Image attachments (screenshots, mockups, diagrams, error captures) are downloade
 ## Do Not Use When
 
 - The user wants to search or list multiple issues — use the Atlassian MCP search tool (`mcp__atlassian__jira_search`, or `searchJiraIssuesUsingJql` on the hosted server) directly.
-- Atlassian is not connected at all (no API token and the hosted server isn't signed in) — run `python3 .claude/tools/atlassian_fetch.py check` to test them.
+- Atlassian is not connected at all (no hosted Atlassian MCP connector signed in and no API token).
 
 ## Input
 
@@ -33,10 +33,10 @@ Image attachments (screenshots, mockups, diagrams, error captures) are downloade
 ## Step 0 — Resolve key and load env
 
 ```bash
-set -a; . ./.claude/.env; set +a
+set -a; [ -f ./.claude/.env ] && . ./.claude/.env; set +a
 ```
 
-If `args` is only digits, prepend `$JIRA_WORKSPACE-`. Confirm `JIRA_BASE_URL` is set — if not, tell the user and stop. `JIRA_EMAIL` / `JIRA_API_TOKEN` are optional: without them the agent uses the hosted browser-sign-in MCP server (`/mcp` → `atlassian-oauth` → Authenticate, once).
+If `args` is only digits, prepend `$JIRA_WORKSPACE-` (without it, ask for the full key). No key is required: the agent tries the hosted Atlassian MCP connector first and the API token only as a fallback (`agents/jira-context.md` → "Access paths").
 
 Parse `--` separator: everything before is the ticket key plus the optional `--no-images` / `--max-images=N` flags; everything after is related_repos (pass `"none"` if absent).
 
@@ -118,7 +118,7 @@ Attachments are downloaded only for this analysis; nothing is kept in the projec
 
 ## If the MCP server is down
 
-Nothing to do — the agent falls back to REST by itself and reports `Source: REST fallback`; the image step always uses REST (API token required). To see why the MCP server is failing, run `/mcp` or start it by hand (`python3 .claude/tools/mcp-run.py … -- uvx mcp-atlassian`; its `[mcp-run]` stderr line names a missing key). To test the credentials directly: `python3 .claude/tools/atlassian_fetch.py check`.
+Nothing to do — the agent moves to the next access path by itself and reports its `Source`. The image step needs the API token (REST download); without a working token, skip it and say so. To see why the MCP server is failing, run `/mcp` or start it by hand (`python3 .claude/tools/mcp-run.py … -- uvx mcp-atlassian@<version>`, with the version pinned in `mcp.json.template`; its `[mcp-run]` stderr line names a missing key). To test the credentials directly: `python3 .claude/tools/atlassian_fetch.py check`.
 
 ## Constraints
 

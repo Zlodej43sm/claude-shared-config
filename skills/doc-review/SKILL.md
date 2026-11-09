@@ -77,6 +77,7 @@ Missing answers are findings; phrase them as the question a reviewer would ask.
 - Findings ranked **blocking** (wrong claim the design relies on, a design gap that loses or leaks data, a durable doc mixing in plan content when the project forbids it), **should fix** (§A–§C, §E–§I gaps; a durable doc describing unmerged behaviour), **question**, **[nit]**.
 - Each finding: `file:line` — what is wrong (rule cited) — why it matters (a concrete case: a timeout, a retry, a second instance, a reader who can't find the answer) — the proposed fix (a ready diagram/table skeleton or replacement text in a `suggestion` block).
 - Ask when the intent is unclear instead of asserting.
+- A should-fix that needs the author or the doc's owner to choose first (which source is right, should two docs agree) is labelled `should-fix (decision needed)` in the review only. Its comment text is written the way a human reviewer would: short, plain words, only the facts needed to answer, one question, at most one suggested way forward, and no label, emoji, bold or rule citation. When posted, it goes out as that plain text alone. Every other finding keeps its usual label.
 - Read-only: don't edit, post or resolve threads unless the user asks.
 
 ## Learning from reviewers

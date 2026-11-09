@@ -5,7 +5,7 @@
 #   --summary=TEXT         Issue summary (required)
 #   --description=TEXT     Plain-text description; converted to Atlassian Document
 #                          Format, one paragraph per blank-line-separated block (optional)
-#   --parent=KEY           Parent issue key, e.g. MA-29 (optional — omit for a top-level issue)
+#   --parent=KEY           Parent issue key, e.g. PROJ-29 (optional — omit for a top-level issue)
 #   --issuetype=NAME       Issue type name (optional; default "Task")
 #   --project=KEY          Project key (optional; default $JIRA_WORKSPACE)
 #   --reporter=ACCOUNT_ID  Reporter accountId (optional; resolved via /myself when omitted —
@@ -16,12 +16,13 @@
 #   env JIRA_BASE_URL  JIRA_EMAIL  JIRA_API_TOKEN  JIRA_WORKSPACE
 #
 # SCHEMA_OUT  stdout JSON
-#   { "key": "MA-157", "self": "https://<site>/browse/MA-157" }
+#   { "key": "PROJ-157", "self": "https://<site>/browse/PROJ-157" }
 #   --dry-run prints the built request payload instead, unposted.
 #
 # EXIT  0=ok  1=bad-args  2=http-error
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 SUMMARY="" DESCRIPTION="" PARENT="" ISSUETYPE="Task" PROJECT="${JIRA_WORKSPACE:-}" REPORTER="" ASSIGNEE="" DRY_RUN=""
 for arg in "$@"; do
@@ -45,7 +46,7 @@ if [[ -z "${JIRA_BASE_URL:-}" || -z "${JIRA_EMAIL:-}" || -z "${JIRA_API_TOKEN:-}
 fi
 
 if [[ -z "$REPORTER" ]]; then
-  REPORTER=$(curl -sS --fail-with-body -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+  REPORTER=$(curl -sS --fail-with-body -K <(curl_basic_auth "$JIRA_EMAIL" "$JIRA_API_TOKEN") \
     "${JIRA_BASE_URL}/rest/api/3/myself" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["accountId"])')
 fi
@@ -91,7 +92,7 @@ if [[ -n "$DRY_RUN" ]]; then
   exit 0
 fi
 
-RESPONSE=$(curl -sS --fail-with-body -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+RESPONSE=$(curl -sS --fail-with-body -K <(curl_basic_auth "$JIRA_EMAIL" "$JIRA_API_TOKEN") \
   -X POST "${JIRA_BASE_URL}/rest/api/3/issue" -H "Content-Type: application/json" -d "$PAYLOAD") \
   || { echo "ERROR: Jira create failed — response: ${RESPONSE:-<none>}" >&2; exit 2; }
 
