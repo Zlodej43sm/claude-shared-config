@@ -44,7 +44,7 @@ Focus on:
 - Existing patterns for the same kind of work (e.g. if adding a new reader, find existing readers).
 - Test patterns — existing test fixtures, setup files, mock patterns (derive filename conventions from CLAUDE.md and the existing test tree).
 - Schema files if the ticket involves schema changes (Avro, Proto, JSON Schema, Zod, etc.).
-- **Database migrations** if the ticket adds or changes a table, column or index. First read the project's DB rules: a project-local skill in `.claude/skills/` whose description covers migrations (read its `SKILL.md`), and any migration checklist, conventions doc or template that the repo's `CLAUDE.md` or the workspace-root `CLAUDE.md` above it points to. Model the SQL on the newest migration that follows those rules, **not** on the legacy table the new one sits next to.
+- **Database migrations** if the ticket adds or changes a table, column or index. First read the project's DB rules: any migration checklist, conventions doc or template that the repo's `CLAUDE.md` or the workspace-root `CLAUDE.md` above it points to. Model the SQL on the newest migration that follows those rules, **not** on the legacy table the new one sits next to.
 - The project's config/settings module if new env vars are needed.
 - `.env.example` for the same reason.
 

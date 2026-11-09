@@ -14,7 +14,7 @@ verified: <YYYY-MM-DD>
 **What it is:** <one or two sentences>. (family: <family>)
 **Top review risks:** <3–5 short risks, `;`-separated>
 **Related:** `docs/services/<other>.md`, …
-**Code:** `<absolute root>/<repo>/` · **Index:** `docs/services/README.md` · **Workspace map:** root `CLAUDE.md` §2-§3 · **Lookups:** `docs/lookups.md`[ · **More:** `docs/services/<repo>--review.md`]
+**Code:** `<repo>/` · **Index:** `docs/services/README.md` · **Workspace map:** root `CLAUDE.md` §2-§3 · **Lookups:** `docs/lookups.md`[ · **More:** `docs/services/<repo>--review.md`]
 
 ---
 

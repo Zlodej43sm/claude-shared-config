@@ -181,7 +181,7 @@ Where the entry goes depends on what kind of lesson it is:
 
 - Append the correction to `.claude/reviews/split-pr-lessons.local.md` (create it if needed). Keep it concrete and free of credentials.
 - Never write to the shared `LESSONS.md` during a project run. A maintainer may separately promote an anonymized, portable lesson after review.
-- For a reproducible tool defect, fix the relevant shared script in a deliberate maintenance change rather than recording project data in a lesson.
+- For a reproducible tool defect, report it to the user (script, input, wrong output) instead of recording project data in a lesson. Never edit `.claude/tools/` during a project run: it is the shared tree every linked project uses.
 
 ## Constraints
 

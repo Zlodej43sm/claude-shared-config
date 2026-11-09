@@ -48,7 +48,7 @@ Example — "Explain database connection pooling."
 
 ## Complexity-Based Mode Selection
 
-Auto-pick level from task complexity. Rule **inverse**: simpler/lower-risk → more compression (safe); complex/risky → back off so terseness never cause misread. Maps onto Rosetta request sizing (SMALL/MEDIUM/LARGE). Explicit `/caveman <level>` always override auto-pick.
+Auto-pick level from task complexity. Rule **inverse**: simpler/lower-risk → more compression (safe); complex/risky → back off so terseness never cause misread. Explicit `/caveman <level>` always override auto-pick.
 
 | Complexity | Signal | Level |
 |------------|--------|-------|

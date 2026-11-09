@@ -32,7 +32,7 @@ The actual items (one `{summary, description}` pair per issue) come from the cur
 ## Step 0 — Load credentials and validate
 
 ```bash
-set -a; . .claude/.env; set +a
+eval "$(python3 .claude/tools/env_exports.py)"
 ```
 
 Required: `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, and either `--project=` or `JIRA_WORKSPACE`. If any is missing or still a placeholder value, tell the user which key to fix and **stop** — do not attempt any call.
@@ -40,7 +40,8 @@ Required: `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, and either `--project
 ## Step 1 — Resolve reporter once
 
 ```bash
-REPORTER=$(curl -sS --fail-with-body -u "$JIRA_EMAIL:$JIRA_API_TOKEN" "$JIRA_BASE_URL/rest/api/3/myself" \
+. .claude/tools/curl_auth.sh   # credentials go through a pipe, never the command line
+REPORTER=$(curl -sS --fail-with-body -K <(curl_basic_auth "$JIRA_EMAIL" "$JIRA_API_TOKEN") "$JIRA_BASE_URL/rest/api/3/myself" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["accountId"])')
 ```
 
@@ -48,12 +49,20 @@ Reuse this `$REPORTER` value for every item in Step 2 — never re-fetch per ite
 
 ## Step 2 — Create each item
 
-For every `{summary, description}` item, call the tool script:
+For every `{summary, description}` item, write the text to files with quoted heredocs (the text is often drafted from tickets, pages or PRs; in a double-quoted `--summary="…"` its backticks and `$(…)` would run), then call the tool script:
 
 ```bash
+WORK_DIR=$(mktemp -d)   # once, for the whole batch
+cat > "$WORK_DIR/summary.txt" <<'SUMMARY_EOF'
+<summary>
+SUMMARY_EOF
+cat > "$WORK_DIR/description.txt" <<'DESCRIPTION_EOF'
+<description>
+DESCRIPTION_EOF
+
 .claude/tools/jira_create_child.sh \
-  --summary="<summary>" \
-  --description="<description>" \
+  --summary-file="$WORK_DIR/summary.txt" \
+  --description-file="$WORK_DIR/description.txt" \
   --parent="<PARENT, or omit entirely>" \
   --issuetype="<ISSUETYPE, default Task>" \
   --project="<PROJECT, default $JIRA_WORKSPACE>" \

@@ -5,6 +5,9 @@ all fetched Jira and Confluence files.
 
 SCHEMA_IN
   --pr-id=N
+  --pr-json=PATH   output of bb_pr_fetch.sh / gh_pr_fetch.sh saved to a file; supplies
+                   the five fields below (preferred: the PR text never passes through a
+                   shell command line). An explicit flag still wins.
   --title=TEXT
   --source-branch=BRANCH
   --dest-branch=BRANCH
@@ -34,6 +37,13 @@ for arg in sys.argv[1:]:
     if "=" in arg:
         k, v = arg.lstrip("-").split("=", 1)
         args[k] = v
+
+if "pr-json" in args:
+    with open(args["pr-json"]) as f:
+        pr = json.load(f)
+    for flag, field in (("title", "title"), ("source-branch", "source_branch"), ("dest-branch", "dest_branch"),
+                        ("source-commit", "source_commit"), ("author", "author")):
+        args.setdefault(flag, str(pr.get(field, "")))
 
 required = ["pr-id", "title", "source-branch", "dest-branch", "source-commit", "author"]
 missing = [r for r in required if r not in args]

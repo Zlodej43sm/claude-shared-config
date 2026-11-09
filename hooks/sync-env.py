@@ -1,22 +1,23 @@
     #!/usr/bin/env python3
 """
-SessionStart hook: sync .claude/.env into .claude/settings.local.json `env` block
-so every Bash/agent/skill invocation inherits the keys automatically.
+SessionStart hook: make .claude/.env available to every Bash/agent/skill call.
 
 Behavior:
 - Reads .claude/.env (KEY=VALUE, ignores #comments and blanks, strips matching quotes).
-- Values of the form `op://vault/item/field` are resolved via `op read` (1Password CLI)
-  before merging, so no secret needs to sit in .env as plaintext. Never blocks the
-  session: if `op` is missing, not signed in, or a read fails, warns on stderr and
-  merges the unresolved op:// string as-is (skills needing that key will then fail
-  the same way they would with a missing/placeholder value today).
-- Merges into settings.local.json `env` (values from .env win on conflict).
-- ANTHROPIC_API_KEY: when .env holds a usable key it is merged like the rest, so
-  Claude Code authenticates with it from the next session start (before this hook
-  runs the session is already signed in, so the first session still uses the login)
-  and every skill/agent that calls the Anthropic API inherits it. A placeholder,
-  empty or unresolved op:// value is never merged (it would break auth instead of
-  falling back to the login).
+- Values of the form `op://vault/item/field` are resolved via `op read` (1Password CLI),
+  so no secret needs to sit in .env as plaintext. Never blocks the session: if `op` is
+  missing, not signed in, or a read fails, warns on stderr and leaves the key unset.
+- Every key is exported to this session's Bash calls through CLAUDE_ENV_FILE.
+- Non-secret keys are also merged into settings.local.json `env` (values from .env win
+  on conflict), so they apply from the next session start. Secret keys (an op://
+  reference in .env, or a name like *TOKEN*, *SECRET*, *PASSWORD*, *API_KEY*) are never
+  written there, and a copy synced by an earlier version is removed; MCP servers
+  resolve their own secrets through tools/mcp-run.py.
+- ANTHROPIC_API_KEY is the one secret written to settings.local.json: Claude Code reads
+  it at startup to authenticate (from the next session start; the first session still
+  uses the login). The file is then kept owner-only (0600). A placeholder, empty or
+  unresolved op:// value is never written (it would break auth instead of falling back
+  to the login).
 - Warns on stderr if .env is missing, unparseable, or required keys are absent /
   still placeholders. Never blocks the session.
 """
@@ -48,6 +49,7 @@ JIRA_KEYS = (
 )
 JIRA_CREDENTIAL_KEYS = ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")  # optional: else atlassian-oauth
 ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
+SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL", re.I)
 # Registered as `apiKeyHelper` next to the env var: Claude Code asks once whether to use an
 # env-provided key and remembers a "No" per key (customApiKeyResponses.rejected in
 # ~/.claude.json), silently falling back to the claude.ai login. A helper has no prompt.
@@ -269,8 +271,18 @@ def export_to_session(env: dict[str, str]) -> None:
     try:
         with open(target, "a", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
+        os.chmod(target, 0o600)
     except OSError as exc:
         warn(f"could not write CLAUDE_ENV_FILE ({exc}); keys apply from the next session")
+
+
+def secret_keys(raw_env: dict[str, str]) -> set[str]:
+    """Keys never written to settings.local.json: an op:// reference in .env, a
+    secret-looking name, and GITHUB_TOKEN (it may come from `gh auth token`)."""
+    keys = {k for k, v in raw_env.items() if v.startswith("op://") or SECRET_NAME.search(k)}
+    keys.add("GITHUB_TOKEN")
+    keys.discard(ANTHROPIC_KEY)
+    return keys
 
 
 def main() -> int:
@@ -283,16 +295,16 @@ def main() -> int:
         return 0
 
     try:
-        env = parse_env_file(env_path)
+        raw_env = parse_env_file(env_path)
     except OSError as exc:
         warn(f"failed to read {env_path}: {exc}; skipping.")
         return 0
 
-    if not env:
+    if not raw_env:
         warn(f"{env_path} parsed to zero entries; skipping.")
         return 0
 
-    env = resolve_op_refs(env)
+    env = resolve_op_refs(raw_env)
 
     host = detect_git_host(env)
     if host == "bitbucket":
@@ -348,17 +360,25 @@ def main() -> int:
     drop_unusable_anthropic_key(env, current_env)
     export_to_session(env)
 
-    merged = {**current_env, **env}
+    secrets = secret_keys(raw_env)
+    for key in secrets:
+        current_env.pop(key, None)
+    persisted = {k: v for k, v in env.items() if k not in secrets and not v.startswith("op://")}
+    merged = {**current_env, **persisted}
     env_changed = merged != original_env
     mcp_changed = apply_mcp_servers(project_root, settings, unused_mcp_servers(host, env))
     helper_changed = apply_api_key_helper(settings, merged)
     if not (env_changed or mcp_changed or helper_changed):
+        if settings_path.is_file():
+            os.chmod(settings_path, 0o600)
         return 0
 
     settings["env"] = merged
     settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    os.chmod(settings_path, 0o600)
     if env_changed:
-        warn(f"synced {len(env)} vars from .claude/.env into settings.local.json")
+        warn(f"synced {len(persisted)} non-secret vars from .claude/.env into settings.local.json "
+             "(secrets go to this session only)")
     if helper_changed:
         warn("updated apiKeyHelper in settings.local.json (takes effect next session)")
     if mcp_changed:

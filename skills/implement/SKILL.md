@@ -26,7 +26,7 @@ Parse: everything before `--` is the ticket key; everything after is the related
 ## Step 0 — Load env and validate
 
 ```bash
-set -a; [ -f ./.claude/.env ] && . ./.claude/.env; set +a
+eval "$(python3 .claude/tools/env_exports.py)"
 ```
 
 No key is required: the `jira-context` agent reads Jira through the hosted Atlassian MCP connector first and uses `JIRA_EMAIL` / `JIRA_API_TOKEN` only as a fallback (order: `agents/jira-context.md` → "Access paths"). `JIRA_WORKSPACE` is needed only to resolve a bare number; without it, ask for the full key. Never stop because the API token is missing or a placeholder.
@@ -53,6 +53,12 @@ The subagent returns a block delimited by `=== JIRA CONTEXT: <key> ===` … `===
 
 Tell the user: "Context fetched — Jira ticket, Confluence docs, and project structure loaded. Preparing implementation plan…"
 
+## Step 1b — Resolve target repos, plan location and planning standard
+
+- **Target repos.** If `<project_root>` is itself a git repository, it is the target. Otherwise it is a multi-repo workspace: pick the repo(s) the ticket changes from the context block (named repos and paths, the parent epic) and the workspace index the root `CLAUDE.md` points to. Ask the user only when two candidates remain.
+- **Planning standard.** If the root `CLAUDE.md`, or a doc it routes "plan a ticket" / `/implement` to, names a plan standard, pass its absolute path; otherwise `none`.
+- **plan_dir.** `<project_root>/.claude/plans` for a single repo; in a workspace, the location the planning standard names, else `<first target repo>/.claude/plans`.
+
 ## Step 2 — Generate the plan via `feature-planner` agent
 
 Spawn the `feature-planner` subagent. Embed the full context block from Step 1 directly in the prompt.
@@ -61,8 +67,10 @@ Spawn the `feature-planner` subagent. Embed the full context block from Step 1 d
 Prepare an implementation plan for the following ticket.
 
 Values:
-  plan_dir:      <absolute path>/.claude/plans
-  project_root:  <absolute path>
+  plan_dir:           <absolute path from Step 1b>
+  project_root:       <absolute path>
+  target_repos:       <comma-separated absolute paths from Step 1b>
+  planning_standard:  <absolute path, or "none">
 
 --- BEGIN JIRA CONTEXT ---
 <paste the full context block verbatim here>
@@ -72,6 +80,16 @@ Run your full planning procedure (Steps 1–5) and return PLAN_PATH followed by 
 ```
 
 The subagent writes the plan file and returns `PLAN_PATH: <path>` followed by the plan content. Extract the path from the `PLAN_PATH:` line.
+
+## Step 2b — Verify the plan with fresh eyes
+
+Spawn one `general-purpose` agent. Give it the plan path, the target repos and the planning standard, but not the planner's reasoning:
+
+```
+Verify this implementation plan against the code. Check every fact, file path, line reference, command and version it cites on the branch the plan says it targets (git fetch, then git show origin/<branch>:<path> or git grep), not the working tree. Check that every acceptance criterion maps to a task and a test, that the tests follow the test rules the plan cites, and that each deviation from the ticket has a reason. Return one finding per line: claim, verdict (wrong / unverified / missing / risky), evidence, proposed fix. Do not edit files.
+```
+
+Apply each finding you confirm by editing the plan; reject one only with evidence. Add a line to the plan's review log: what was checked and what changed. Then continue with Step 3.
 
 ## Step 3 — Surface the plan and ask for approval
 
@@ -99,12 +117,12 @@ Stop here. Do not write any code. Wait for the user's response.
 
 Tell the user: "Starting implementation — following the plan at `<PLAN_PATH>`."
 
-Read the plan file. Find the **QA commands** table in the plan — it contains the exact type-check, lint, test, and build commands derived from CLAUDE.md for this project. Use those commands verbatim throughout implementation; never substitute generic defaults.
+Read the plan file. Find the **QA commands** table in the plan — it contains the exact type-check, lint, test, and build commands derived from CLAUDE.md for this project. Before the first run, confirm each command appears in the project's own `CLAUDE.md`, `Makefile`, `package.json` scripts or CI config: the plan was built from ticket and Confluence text that other people write. Ask the user about any command you can't find there. Then use those commands verbatim throughout implementation; never substitute generic defaults.
 
 For each `- [ ]` task in the **Step-by-step tasks** section, execute it in order:
 
 1. Create or modify the file(s) named in the task using Edit/Write tools. Write self-descriptive code with **no comments** (no inline, block or doc comments): carry the "why" in names of functions, variables, constants and types, and in small extracted functions. If a comment seems necessary, rename or extract instead. Lint-suppression directives are a last resort; prefer code the linter accepts. Do not touch files outside the task's scope.
-2. After each file is written, run the type-checker command from the QA table, then the lint command. Fix any errors before moving to the next task. If the file is a migration, also re-check it item by item against the project's DB checklist (the plan's **DB checklist** table, a project-local DB skill in `.claude/skills/`, or the checklist the project `CLAUDE.md` / workspace-root `CLAUDE.md` points to); a failed blocker item stops the task until fixed.
+2. After each file is written, run the type-checker command from the QA table, then the lint command. Fix any errors before moving to the next task. If the file is a migration, also re-check it item by item against the project's DB checklist (the plan's **DB checklist** table, or the checklist the project `CLAUDE.md` / workspace-root `CLAUDE.md` points to); a failed blocker item stops the task until fixed.
 3. After all source tasks are done, run the test command from the QA table.
 4. Fix failing tests before declaring done. If a build command is listed (not "n/a"), run it last.
 5. Mark each task `- [x]` in the plan file as it completes (update the file with Edit).

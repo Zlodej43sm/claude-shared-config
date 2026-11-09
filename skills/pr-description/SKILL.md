@@ -10,7 +10,7 @@ Write the PR title and description. Draft first; post only with `--post` or when
 ## Step 0 — Load env
 
 ```bash
-set -a; . .claude/.env; set +a
+eval "$(python3 .claude/tools/env_exports.py)"
 ```
 
 `JIRA_WORKSPACE` is the Jira project key (for example `ABC`). Never hardcode a key: always use `$JIRA_WORKSPACE`.
@@ -49,9 +49,34 @@ Before you finish, reread the body and delete every sentence that doesn't help t
 
 ## Step 4 — Show, then post
 
-Show the title and body to the user. Post only with `--post` or a clear yes:
+Show the title and body to the user. Post only with `--post` or a clear yes. Pass both through a JSON file, never inline in the command: a `'` in the title breaks a single-quoted argument, and `$(…)` in a double-quoted one runs.
 
-- GitHub: `gh api -X PATCH repos/<owner>/<repo>/pulls/<n> -f title='<title>' -F body=@<file>`. `gh pr edit` needs the `read:org` scope, which many tokens lack.
-- Bitbucket: `PUT …/pullrequests/<id>` with `title` and `description`.
+```bash
+WORK_DIR=$(mktemp -d)
+cat > "$WORK_DIR/title.txt" <<'TITLE_EOF'
+<title>
+TITLE_EOF
+cat > "$WORK_DIR/body.md" <<'BODY_EOF'
+<body>
+BODY_EOF
+python3 - "$WORK_DIR" <<'PY'
+import json, sys
+d = sys.argv[1]
+title, body = open(f"{d}/title.txt").read().strip(), open(f"{d}/body.md").read()
+json.dump({"title": title, "body": body}, open(f"{d}/github.json", "w"))
+json.dump({"title": title, "description": body}, open(f"{d}/bitbucket.json", "w"))
+PY
+```
+
+- GitHub: `gh api -X PATCH repos/<owner>/<repo>/pulls/<n> --input "$WORK_DIR/github.json"`. `gh pr edit` needs the `read:org` scope, which many tokens lack.
+- Bitbucket:
+  ```bash
+  . .claude/tools/curl_auth.sh   # credentials go through a pipe, never the command line
+  curl -sS --fail-with-body -K <(curl_basic_auth "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN") \
+    -X PUT -H "Content-Type: application/json" --data @"$WORK_DIR/bitbucket.json" \
+    "https://api.bitbucket.org/2.0/repositories/$BITBUCKET_WORKSPACE/$BITBUCKET_REPO_SLUG/pullrequests/<id>"
+  ```
+
+Then `rm -rf "$WORK_DIR"`.
 
 Report the PR link after posting.

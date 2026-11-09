@@ -28,6 +28,21 @@ export HOST
 python3 - <<'PY'
 import base64, json, os, urllib.error, urllib.request
 from pathlib import Path
+from urllib.parse import urlsplit
+
+
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib copies every header, Authorization included, to wherever a redirect
+    points. Keep it only for a same-origin hop (same scheme, host and port)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urlsplit(newurl)[:2] != urlsplit(req.full_url)[:2]:
+            new.headers.pop("Authorization", None)
+        return new
+
+
+OPENER = urllib.request.build_opener(_StripAuthOnRedirect)
 
 host = os.environ["HOST"]
 keys = {
@@ -61,7 +76,7 @@ else:
         headers = {"Authorization": f"Basic {cred}"}
     api["checked"] = True
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=15) as r:
+        with OPENER.open(urllib.request.Request(url, headers=headers), timeout=15) as r:
             api["status"] = r.status
             api["ok"] = True
             body = json.load(r)

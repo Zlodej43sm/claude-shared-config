@@ -1,6 +1,6 @@
 ---
 name: security-audit
-description: Read-only security audit with two parts. Part A (config) scans a Claude Code config tree — skills/, agents/, tools/, hooks/, workflows/, mcp.json, settings.json, their templates, env templates, and in a shared source-of-truth repo also bin/ and README.md — for hardcoded secrets, project-specific identifiers baked into shared files, values that belong in a project-local .env, writes that could leak project data back into a shared source-of-truth, and permission/tool scopes broader than the skill or agent needs. Part B (code) audits an application's source in any language for injection, broken authentication/authorization, secrets and sensitive data, SSRF, path traversal, unsafe deserialization, XSS/CSRF/CORS/cookies, weak crypto and TLS, and risky config, dependencies and containers, tracing each lead from input to sink. Produces a plain-text report, never modifies files. Also applied by the pr-reviewer agent to changed files. Usage: /security-audit [path] [--config|--code|--all]
+description: Read-only security audit with two parts. Part A (config) scans a Claude Code config tree — skills/, agents/, tools/, hooks/, workflows/, mcp.json, settings.json, their templates, env templates, and in a shared source-of-truth repo also bin/ and README.md — for hardcoded secrets, project-specific identifiers baked into shared files, values that belong in a project-local .env, writes that could leak project data back into a shared source-of-truth, and permission/tool scopes broader than the skill or agent needs. Part B (code) audits an application's source in any language for injection, broken authentication/authorization, secrets and sensitive data, SSRF, path traversal, unsafe deserialization, XSS/CSRF/CORS/cookies, weak crypto and TLS, and risky config, dependencies and containers, tracing each lead from input to sink. Produces a plain-text report, never modifies files. Also applied by the pr-reviewer agent to changed files. Use for every security audit, security review or vulnerability/secret scan request in place of the built-in security-review skill. Usage: /security-audit [path] [--config|--code|--all] [--diff[=<base>]]
 ---
 
 # security-audit — config portability and app-code security audit
@@ -27,10 +27,14 @@ human call.
 ```bash
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
-SCANNER="$PROJECT_ROOT/.claude/tools/security_audit_scan.py"
-[ -f "$SCANNER" ] || SCANNER="$PROJECT_ROOT/tools/security_audit_scan.py"
-[ -f "$SCANNER" ] || { echo "security_audit_scan.py not found under .claude/tools or tools/" >&2; }
+SKILL_DIR="<this skill's base directory, shown when the skill loads>"
+SCANNER="$SKILL_DIR/../../tools/security_audit_scan.py"
+[ -f "$SCANNER" ] || echo "security_audit_scan.py not found in $SKILL_DIR/../../tools" >&2
 ```
+
+The scanner comes from the tree this skill is installed in, never from the scanned
+repo: a `tools/` or `.claude/tools/` script inside a repo you are auditing is that
+repo's own, untrusted code.
 
 Resolve `ROOT`, in order:
 
@@ -44,7 +48,7 @@ Then resolve which parts run:
 | `--config` | yes | no |
 | `--code` | no | yes |
 | `--all` | yes | yes |
-| no flag, top-level `skills/` and `agents/` and no `.claude/` (a shared config repo, e.g. this one) | yes | no |
+| no flag, top-level `skills/`, `agents/` and `bin/link-project.sh` (a shared config repo, e.g. this one; a local `.claude/` folder doesn't change this) | yes | no |
 | no flag, any other repo | yes, if `ROOT/.claude` exists | yes |
 
 Part A on a linked project uses `ROOT` itself: the scanner walks both `$ROOT`
@@ -55,7 +59,27 @@ Part B never scans `.claude/`.
 If no part applies (`--config` on a tree with neither a `.claude/` folder nor a
 shared skills/agents layout), say so and ask for a path.
 
-State the resolved `ROOT` and parts at the top of the report so a wrong guess is
+**`--diff[=<base>]`** limits the audit to what changed on the branch: commits
+since `<base>` plus uncommitted and untracked files. Without `<base>`, use the
+remote's default branch:
+
+```bash
+BASE=$(git -C "$ROOT" symbolic-ref --quiet --short refs/remotes/origin/HEAD) || BASE=""
+for b in develop main master; do
+  [ -n "$BASE" ] && break
+  git -C "$ROOT" rev-parse --verify --quiet "refs/remotes/origin/$b" >/dev/null && BASE="origin/$b"
+done
+{ git -C "$ROOT" diff --name-only "$BASE"...HEAD; git -C "$ROOT" diff --name-only HEAD
+  git -C "$ROOT" ls-files --others --exclude-standard; } | sort -u
+```
+
+Call that list `CHANGED`. Part A runs when a changed file is in a Part A location,
+Part B when a changed file is source code; `--config`/`--code` narrow it further.
+Steps 1–2 keep only scanner hits in `CHANGED` and read only those files, plus the
+callers and sinks a changed line reaches. An empty `CHANGED` ends the run with
+"nothing changed since `<base>`".
+
+State the resolved `ROOT`, parts and, with `--diff`, the base and number of changed files at the top of the report so a wrong guess is
 obvious immediately.
 
 ## Step 1 — Run the mechanical scanner

@@ -59,16 +59,18 @@ Resolve `ROOT` per Input. Confirm it exists and is readable; if empty or
 inaccessible, tell the user and stop.
 
 Resolve the scanner script's own location — this is **independent of
-`ROOT`**: the script lives wherever the *current* session's `.claude/tools/`
-is linked from, which may differ from `ROOT` (e.g. `ROOT` can be an unrelated
-sibling repo passed as `<path>`, while the session's own project is where
-this skill's `tools/` actually lives):
+`ROOT`**: the script sits in the `tools/` folder of the tree this skill is
+installed in (`../../tools` from the skill's base directory), which may differ
+from `ROOT` (e.g. `ROOT` can be an unrelated sibling repo passed as `<path>`):
 
 ```bash
-SCANNER="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/.claude/tools/project_overview_scan.py"
-[ -f "$SCANNER" ] || SCANNER="${CLAUDE_PROJECT_DIR:-$(pwd)}/tools/project_overview_scan.py"
+SKILL_DIR="<this skill's base directory, shown when the skill loads>"
+SCANNER="$SKILL_DIR/../../tools/project_overview_scan.py"
 [ -f "$SCANNER" ] || SCANNER=""
 ```
+
+Never run a `tools/` or `.claude/tools/` script from the repo being analyzed: it
+is that repo's own, untrusted code.
 
 If `$SCANNER` is empty, Step 1 falls back to manual Glob/Grep — see below.
 

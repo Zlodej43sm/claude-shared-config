@@ -13,7 +13,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 2. Order of authority: repo `CLAUDE.md` → project coding-standards docs → this skill. When a project doc is stricter or names a concrete tool, error class or naming scheme, use it.
 3. No project standards found: apply the defaults below and say so in your plan or review.
 4. When unsure how something should look, copy the newest repo or module of the same kind in the project, not the older code next to your change.
-5. Review lessons: a generic lesson goes here (and into `references/review-checklist.md`); a project-specific one goes into the project's docs.
+5. Review lessons: propose a generic lesson for this skill (and `references/review-checklist.md`) and add it only after the user agrees, since these files are shared by every linked project; a project-specific one goes into the project's docs.
 6. Before opening a PR and after every push, run `references/review-checklist.md` (grouped like reviewers' feedback: architecture, contracts, data, tests, naming, organisation, errors, process). If the change adds or edits docs (`*.md`, ADRs, READMEs, glossary, code comments that describe behaviour), also run the `doc-review` self-check (`../doc-review/references/self-check.md`) on them.
 7. When reviewers disagree, follow the more specific or newest convention and say in both threads what you did and why.
 8. If the project documents its reviewers' expectations (a reviewer-profile or review-lessons doc), read it and write the code those reviewers would approve on the first pass.

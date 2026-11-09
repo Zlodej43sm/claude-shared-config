@@ -33,7 +33,7 @@ Image attachments (screenshots, mockups, diagrams, error captures) are downloade
 ## Step 0 — Resolve key and load env
 
 ```bash
-set -a; [ -f ./.claude/.env ] && . ./.claude/.env; set +a
+eval "$(python3 .claude/tools/env_exports.py)"
 ```
 
 If `args` is only digits, prepend `$JIRA_WORKSPACE-` (without it, ask for the full key). No key is required: the agent tries the hosted Atlassian MCP connector first and the API token only as a fallback (`agents/jira-context.md` → "Access paths").

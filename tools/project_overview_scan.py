@@ -604,7 +604,7 @@ def git_remotes(path: Path) -> list[dict]:
     for line in out.splitlines():
         parts = line.split()
         if len(parts) >= 2:
-            seen[parts[0]] = parts[1]
+            seen[parts[0]] = re.sub(r"(https?://)[^/@\s]+@", r"\1", parts[1])  # drop user:token@
     return [{"name": k, "url": v} for k, v in seen.items()]
 
 

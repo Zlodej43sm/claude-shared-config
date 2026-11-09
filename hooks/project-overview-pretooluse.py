@@ -20,9 +20,8 @@ authoritative would actively mislead the model, which is worse than
 injecting nothing. The injected context says so explicitly and tells the
 skill to re-run the scanner itself if the real arguments differ.
 
-Logs the raw stdin payload to DEBUG_LOG once per invocation so a real Skill
-call's actual tool_input shape can be inspected and this script tightened
-accordingly — remove that logging once the shape is confirmed.
+Runs the scanner from this hook's own shared tree (hooks/../tools/), never a
+copy inside the scanned project: a repo's own `tools/*.py` is untrusted code.
 
 STDIN   PreToolUse hook payload JSON
 STDOUT  nothing (no-op) or {"hookSpecificOutput": {...}} on a confirmed match
@@ -34,15 +33,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-DEBUG_LOG = Path("/tmp/project-overview-pretooluse-debug.jsonl")
-
-
-def log_debug(payload: dict) -> None:
-    try:
-        with DEBUG_LOG.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(payload) + "\n")
-    except OSError:
-        pass
+SCANNER = Path(__file__).resolve().parent.parent / "tools" / "project_overview_scan.py"
 
 
 def is_project_overview(payload: dict) -> bool:
@@ -68,8 +59,6 @@ def main() -> None:
     except (json.JSONDecodeError, OSError):
         return
 
-    log_debug(payload)  # prototype only — confirms the real tool_input shape
-
     try:
         matched = is_project_overview(payload)
     except Exception:  # noqa: BLE001 - a bug here must never block the tool
@@ -78,15 +67,12 @@ def main() -> None:
         return
 
     project_root = os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or os.getcwd()
-    scanner = Path(project_root) / ".claude" / "tools" / "project_overview_scan.py"
-    if not scanner.is_file():
-        scanner = Path(project_root) / "tools" / "project_overview_scan.py"
-    if not scanner.is_file():
-        return  # scanner not present in this project — Step 1's own fallback handles it
+    if not SCANNER.is_file():
+        return  # scanner missing from the shared tree — Step 1 runs it itself
 
     try:
         result = subprocess.run(
-            ["python3", str(scanner), str(project_root)],
+            ["python3", str(SCANNER), str(project_root)],
             capture_output=True, text=True, timeout=25, check=False,
         )
     except (OSError, subprocess.SubprocessError):

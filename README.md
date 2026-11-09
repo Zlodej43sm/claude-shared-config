@@ -40,7 +40,7 @@ cd ~/dev/my-app
 cp .claude/.env.example .claude/.env     # then set JIRA_WORKSPACE / JIRA_BASE_URL
 #   (optional) pin explicit values instead:
 #   GITHUB_OWNER=my-org   GITHUB_REPO=my-app
-#   GITHUB_TOKEN=op://Dev Tooling/github-token/credential   # `op signin` first
+#   GITHUB_TOKEN="op://Dev Tooling/github-token/credential"   # `op signin` first
 
 # 3. Start Claude Code in the project (first start: sync-env.py enables the
 #    `github` server and disables the unused ones; they apply from the next
@@ -116,7 +116,7 @@ server), then:
 # 1. notion.so/profile/integrations -> new internal integration -> copy the secret into 1Password
 # 2. On each page Claude should read: page menu > Connections > add the integration
 # 3. Uncomment in .claude/.env:
-#      NOTION_TOKEN=op://Dev Tooling/notion-token/credential
+#      NOTION_TOKEN="op://Dev Tooling/notion-token/credential"
 # 4. Start Claude Code, then restart it once: sync-env.py switches from notion-oauth to the
 #    token-based `notion` server.
 ```
@@ -189,7 +189,20 @@ server), then:
   change applies from the *next* session start. Entries you add yourself for other servers
   are left alone.
 
-  It also handles `ANTHROPIC_API_KEY`: a real key in `.claude/.env` is merged into
+  Where `.claude/.env` values go:
+
+  | Key | This session's Bash calls | `settings.local.json` `env` (next session on) |
+  | --- | --- | --- |
+  | Non-secret (`GIT_HOST`, `JIRA_BASE_URL`, …) | yes (`CLAUDE_ENV_FILE`) | yes |
+  | Secret (an `op://` reference, or a name like `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*API_KEY*`) | yes, resolved | never; an earlier synced copy is removed |
+  | `ANTHROPIC_API_KEY` | yes, resolved | yes, file kept owner-only (mode 600) |
+
+  Skills and agents load `.claude/.env` with `eval "$(python3 .claude/tools/env_exports.py)"`,
+  which parses the file instead of running it as shell; never `. .claude/.env`. A value with a
+  space, such as `op://Dev Tooling/...`, would make bash run the text after the space as a
+  command. MCP servers resolve their own secrets through `tools/mcp-run.py`.
+
+  It also handles `ANTHROPIC_API_KEY`: a real key in `.claude/.env` is written to
   `settings.local.json` `env` (and exported to the current session's Bash calls), so Claude
   Code authenticates with it from the next session start and skills/agents calling the
   Anthropic API inherit it. An empty, placeholder or unresolved `op://` value is ignored
@@ -203,7 +216,7 @@ server), then:
   `.claude/settings.json` the first time it's linked, the same way as `.mcp.json`
   above. Only generated when no `settings.json` exists yet; once a project has one,
   it's free to diverge (different permissions, extra hooks) and `link-project.sh`
-  will never touch it again. Currently wires up `sync-env.py` (SessionStart) and
+  will never touch it again. Wires up `sync-env.py` (SessionStart) and
   `biome-pretooluse.py` (PreToolUse on Write/Edit) — the latter no-ops silently on
   projects without a `node_modules/.bin/biome`, so it's safe as a shared default.
   `biome-pretooluse.py` checks prospective content via a throwaway sibling temp
@@ -217,8 +230,10 @@ server), then:
   PR-related skills use and whether the `github` MCP server is enabled. Notion needs no entry by default
   (hosted OAuth server); the commented `NOTION_TOKEN` / `NOTION_MCP=off` switch to an API key or turn it off.
 - `bin/link-project.sh <path>` — wires a project to this repo (symlinks +
-  generates `.mcp.json`). It refuses to replace foreign symlinks or an
-  existing `.mcp.json` that differs from the template.
+  generates `.mcp.json`), and appends to the project's `.gitignore` whichever of
+  `.claude/.env`, `.claude/settings.local.json` and `.mcp.json` git doesn't ignore yet.
+  It refuses to replace foreign symlinks or an existing `.mcp.json` that differs
+  from the template.
 
 ## Skills
 
@@ -226,7 +241,7 @@ Invoked as `/<skill-name>` (or by the natural-language triggers noted below), un
 
 | Skill | What it does | When it's used |
 | --- | --- | --- |
-| `answer-pr-comments` | Answers unanswered human reviewer comments on a Bitbucket or GitHub PR. Default: composes and posts replies via the `comment-responder` agent. With `--fix`: verifies each comment against the code, fixes the valid ones, declines the rest with evidence, runs the project's checks, then commits, pushes and posts after one confirmation. | `/answer-pr-comments <pr-number> [<reviewer-name>] [--dry-run] [--fix]` |
+| `answer-pr-comments` | Answers unanswered human reviewer comments on a Bitbucket or GitHub PR. Default: composes replies via the `comment-responder` agent, shows them and posts after one confirmation. With `--fix`: verifies each comment against the code, fixes the valid ones, declines the rest with evidence, runs the project's checks, then commits, pushes and posts after one confirmation. | `/answer-pr-comments <pr-number> [<reviewer-name>] [--dry-run] [--fix]` |
 | `backend-implementation` | Backend coding standards for layered services: loads the project's own coding-standards docs first (pointed to by its root `CLAUDE.md`), then applies generic rules — repository pattern (models hold business logic, providers only access data), records vs API contracts, upserts and batches, validation, errors, logging, config, security, tests, PR hygiene. Holds no project data. | Automatically when implementing, fixing or reviewing backend code; project rules go in the project's `docs/coding-standards*.md` |
 | `backend-review` | Reviews backend code (PR, branch or diff) against the same standards used to write it: the `backend-implementation` rules plus the project's coding-standards and style docs. Checks layering, contracts, upserts, validation, errors, logging, security, tests and naming/style; ranks findings and gives ready-to-apply suggestion blocks. Read-only. The `pr-reviewer` agent applies it to backend files. | When reviewing backend code, alone or inside `/pr-review` |
 | `frontend-review` | Reviews front-end / UI code (PR, branch or diff) for any UI stack. First detects the stack from `package.json` and config (React, Next.js, Angular, Vue, Nuxt, Svelte, Solid, web components, React Native or plain HTML/CSS/templates; data layer, styling, i18n, test tools). Then applies UI-wide checks (API data contract and release order, loading/empty/error states, accessibility, i18n, SSR/hydration, state and data, performance, XSS, design system, analytics, tests) plus the detected framework's best practices from `references/` (`react.md`, `angular.md`, `vue.md`, `other-ui.md`). Holds no project data. Read-only. The `pr-reviewer` agent applies it to the `frontend` bucket. | When reviewing UI code, alone or inside `/pr-review` |
@@ -243,11 +258,12 @@ Invoked as `/<skill-name>` (or by the natural-language triggers noted below), un
 | `pr-review` | Reviews a Bitbucket or GitHub PR (by number, URL, or branch): batch-fetches every linked Jira ticket / Confluence page, asks about cross-service dependencies, then delegates to the `pr-reviewer` agent for a full structured review. Each finding links to its line in the PR's diff view (`tools/pr_line_links.py`). | `/pr-review <pr-number \| url \| branch>` |
 | `project-blueprint` | Turns a ticket or a free-text feature description into a pre-implementation project blueprint — architecture, service ownership, API inventory, proposed directory tree, phased roadmap — grounded in technologies/patterns already used elsewhere in the org. Reuses `jira-context` for ticket fetching and `project-overview`'s scanner for repo/sibling inspection. Planning documents only, no code. | `/project-blueprint <ticket-key \| free-text description> [-- <repo1> [<repo2> ...]]` |
 | `project-overview` | Produces an evidence-based technical/architectural overview of a repo or service — purpose, tech stack, architecture, dependency map, ecosystem relationships, risks/gaps — every claim cited to a file, line, or URL. Read-only. | `/project-overview [<path>] [-- <repo1> [<repo2> ...]]` |
-| `security-audit` | Read-only security audit in two parts. **Config:** scans a Claude Code config tree (skills/agents/tools/hooks/workflows, `mcp.json`, `settings.json`, their templates, env templates; plus `bin/` and `README.md` in this repo) for hardcoded secrets, project-specific identifiers, values that belong in a project-local `.env`, and overly-broad tool/permission scopes. **Code:** audits an app's source in any language for injection, auth/authorization gaps (incl. IDOR), secrets and sensitive data, SSRF, path traversal, unsafe deserialization, XSS/CSRF/CORS/cookies, weak crypto/TLS, and config, dependency and container risks; every finding traces input → sink → missing guard. Mechanical first pass in `tools/security_audit_scan.py --mode=config\|code`. The `pr-reviewer` agent applies the config checks to the `claude-config` bucket and the code checks to every changed file. | `/security-audit [path] [--config\|--code\|--all]`; no flag runs config only in a shared config repo, both parts elsewhere |
+| `security-audit` | Read-only security audit in two parts. **Config:** scans a Claude Code config tree (skills/agents/tools/hooks/workflows, `mcp.json`, `settings.json`, their templates, env templates; plus `bin/` and `README.md` in this repo) for hardcoded secrets, project-specific identifiers, values that belong in a project-local `.env`, and overly-broad tool/permission scopes. **Code:** audits an app's source in any language for injection, auth/authorization gaps (incl. IDOR), secrets and sensitive data, SSRF, path traversal, unsafe deserialization, XSS/CSRF/CORS/cookies, weak crypto/TLS, and config, dependency and container risks; every finding traces input → sink → missing guard. Mechanical first pass in `tools/security_audit_scan.py --mode=config\|code`. The `pr-reviewer` agent applies the config checks to the `claude-config` bucket and the code checks to every changed file. | `/security-audit [path] [--config\|--code\|--all] [--diff[=<base>]]`; no flag runs config only in a shared config repo, both parts elsewhere; `--diff` limits it to the branch's changes |
+| `security-review` | Replaces Claude Code's built-in `/security-review`: runs `security-audit`, with `--diff` when given no arguments, so a bare `/security-review` still reviews the branch's pending changes. Claude itself can't invoke it (`disable-model-invocation`); for a security request it calls `security-audit` directly. | `/security-review [path] [--config\|--code\|--all] [--diff[=<base>]]` |
 | `sonar-triage` | Fetches and triages SonarQube Cloud issues (PR, branch, or main) and proposes a fix for each, checking a project-local `.claude/sonar-known-issues.md` (if present) for confirmed false positives. Analysis only. | `/sonar-triage [pr <number> \| branch <name> \| main]` |
 | `split-pr` | Analyzes a large/complex PR or branch and proposes how to split it into smaller, dependency-ordered (stacked) PRs. Analysis only unless `--apply` is passed. | `/split-pr [<pr-identifier> \| <branch>] [--base=<branch>] [--apply] [--interactive]` |
 | `test-design` | Rules for writing and reviewing tests in any language or stack (backend, frontend, infrastructure, scripts): inventory existing tests first, one unique behaviour per test, lowest level that can prove it, no tests of library/tool guarantees, no duplicates or implied tests, parameterise variants, self-check table. Used by `backend-implementation`, `backend-review` and the `pr-reviewer` agent. | Whenever tests are added, changed, planned or reviewed |
-| `workspace-docs` | Knowledge library for a workspace root holding a family of independent repos: a lean root `CLAUDE.md` index plus `docs/` chunks ≤4 KB with frontmatter (`summary`, `keywords`, `verified`) in a fixed layout (`services/`, `lookups/`, `connections/`, `recipes/`, `links.md`, commands, conventions, checklist, security, drift). Commands: `init`, `refresh`, `align`, `check`, `status`, `find`, `add-doc` (Confluence/Notion/Jira/web/file → chunk), `add-link` (`--pin` keeps it in `CLAUDE.md`), `add-repo`, `remove-repo`, `note`. Mechanical parts in `tools/workspace_docs.py` (`inventory`, `check`, `status [--fetch]`, `find`, `audit`, `scaffold`, `link`). Writes only `CLAUDE.md` and `docs/`, backs them up first, never records secret values. | `/workspace-docs <command> [args] [--root=<workspace-root>]`; run from the workspace root after `bin/link-project.sh <workspace-root>` |
+| `workspace-docs` | Knowledge library for a workspace root holding a family of independent repos: a lean root `CLAUDE.md` index plus `docs/` chunks ≤4 KB with frontmatter (`summary`, `keywords`, `verified`) in a fixed layout (`services/`, `lookups/`, `connections/`, `recipes/`, `links.md`, commands, conventions, checklist, security, drift). Commands: `init`, `refresh`, `align`, `check`, `status`, `find`, `add-doc` (Confluence/Notion/Jira/web/file → chunk), `add-link` (`--pin` keeps it in `CLAUDE.md`), `add-repo`, `remove-repo`, `note`. Mechanical parts in `tools/workspace_docs.py` (`inventory`, `check`, `status [--fetch]`, `sync`, `changes`, `baseline`, `find`, `audit`, `scaffold`, `link`). Writes `CLAUDE.md` and `docs/` (backed up first) and never records secret values; `refresh` only fetches the repos unless `--pull` fast-forwards their default branches, and edits memory files only after you approve. | `/workspace-docs <command> [args] [--root=<workspace-root>]`; run from the workspace root after `bin/link-project.sh <workspace-root>` |
 
 ## Agents
 
@@ -256,8 +272,9 @@ Subagents invoked by the skills above — not called directly by name.
 | Agent | What it does | Invoked by |
 | --- | --- | --- |
 | `comment-responder` | Fetches unanswered PR comments (all pages), reads the current state of each referenced file and any `.claude/reviews/` analysis, composes accurate Fixed/Deferred/Answered replies, and posts them. Also runs as `collect` (fetch only) and `post` (post pre-composed replies, skipping answered ones) for the `--fix` flow. | `answer-pr-comments` |
+| `feature-doc-writer` | Writes the feature document from the ticket, Confluence and diff material in its prompt and returns the markdown. Read is its only tool. | `feature-doc` |
 | `feature-planner` | Architect-level planner: takes a fully-populated Jira context block plus codebase access and produces a concrete implementation plan saved to `.claude/plans/`. Writes no production code. | `implement` |
-| `jira-context` | Fetches a Jira ticket and exhaustively pulls every referenced Confluence page (two levels deep), full bodies, classified by type; also reads `CLAUDE.md` from the primary and any related repos. Uses the Atlassian MCP tools, falling back to `tools/atlassian_fetch.py` (REST) when they're unavailable. | `get-jira-task`, `implement`, `pr-review` |
+| `jira-context` | Fetches a Jira ticket and exhaustively pulls every referenced Confluence page (two levels deep), full bodies, classified by type; also reads `CLAUDE.md` from the primary and any related repos. Uses the Atlassian MCP tools, falling back to `tools/atlassian_fetch.py` (REST) when they're unavailable. Cannot write or edit files. | `get-jira-task`, `implement`, `pr-review` |
 | `pr-reviewer` | Reviews a Bitbucket or GitHub PR end-to-end: fetches diff/commits/comments/Jira context, classifies changed files, reads the working tree, and returns one structured review. Read-only. | `pr-review` |
 
 ## What's NOT here (stays per-project, never write project values back into this repo)
@@ -269,5 +286,6 @@ copied *from* this repo once (see `settings.json.template` / `mcp.json.template`
 above), but the copy then belongs to the project — `link-project.sh` never
 overwrites either one afterward, so a project's customizations never need to
 (and never should) get written back here. Project `.gitignore` must exclude
-`.claude/.env`, `.claude/settings.local.json`, `.mcp.json`, and (if the project
-uses Biome) `**/.pretooluse-tmp-*` — see the `biome-pretooluse.py` note above.
+`.claude/.env`, `.claude/settings.local.json` and `.mcp.json` (`link-project.sh` adds
+any that are missing) and, if the project uses Biome, `**/.pretooluse-tmp-*` — see the
+`biome-pretooluse.py` note above.

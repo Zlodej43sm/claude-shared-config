@@ -12,7 +12,7 @@ Modes:
 
 | `mode`    | What you do                                                                                                           |
 | --------- | --------------------------------------------------------------------------------------------------------------------- |
-| `reply`   | Default. Steps 0–5: research every unanswered comment, compose a reply, post it (unless `dry_run: true`).             |
+| `reply`   | Default. Steps 0–5: research every unanswered comment, compose a reply, write the replies file, post it (unless `dry_run: true`). |
 | `collect` | Steps 0–1 only: write `<cache_dir>/cr_unanswered_{pr_id}.json` and report it. No research, no replies, nothing posted. The skill's `--fix` flow uses this, then edits code itself and comes back with `post`. |
 | `post`    | Step 5 only, for replies the skill composed after fixing code: read `replies_file`, post each reply threaded under its comment. Skips any comment that has been answered since collection. |
 
@@ -23,7 +23,7 @@ Your final message to the skill is a plain-text completion summary — NOT JSON.
 ## Step 0 — Load credentials and project context
 
 ```bash
-set -a; . .claude/.env; set +a
+eval "$(python3 .claude/tools/env_exports.py)"
 ```
 
 `cache_dir` is a private per-invocation directory the skill created; write every intermediate file there, never to a fixed `/tmp` name.
@@ -38,21 +38,30 @@ Then read `CLAUDE.md` for project layout, conventions, and any invariants the re
 
 Send **one message** with these calls in parallel:
 
-1. **PR metadata**:
-   - `host=bitbucket`: `GET https://api.bitbucket.org/2.0/repositories/$BITBUCKET_WORKSPACE/$BITBUCKET_REPO_SLUG/pullrequests/{pr_id}`, auth `-sS --fail-with-body -L -u "$BITBUCKET_EMAIL:$BITBUCKET_API_TOKEN"`.
-   - `host=github`: `GET ${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_OWNER/$GITHUB_REPO/pulls/{pr_id}`, auth `-sS --fail-with-body -L -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json"`.
+1. **PR metadata** — `.claude/tools/bb_pr_fetch.sh {pr_id}` (`host=bitbucket`) or `.claude/tools/gh_pr_fetch.sh {pr_id}` (`host=github`). Its `dest_branch` and `author` feed items 3–4 and the filter below.
 
 2. **All comments, every page** — save to disk to keep large payloads out of context. A PR with more than one page of comments is common; reading only the first page silently drops the rest.
 
     ```python
     import json, os, base64, urllib.request
+    from urllib.parse import urlsplit
 
     cache  = "{cache_dir}"
     pr_id  = "{pr_id}"
     host   = "{host}"
 
+    class StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+        # urllib copies Authorization to any redirect target; keep it for same-origin hops only
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            new = super().redirect_request(req, fp, code, msg, headers, newurl)
+            if new is not None and urlsplit(newurl)[:2] != urlsplit(req.full_url)[:2]:
+                new.headers.pop("Authorization", None)
+            return new
+
+    opener = urllib.request.build_opener(StripAuthOnRedirect)
+
     def get(url, headers):
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers)) as resp:
+        with opener.open(urllib.request.Request(url, headers=headers)) as resp:
             return json.load(resp)
 
     if host == "bitbucket":
@@ -270,11 +279,20 @@ Use one of these openers. **Match to reality** — only say "Fixed" when the fix
 - No "great point" or "thanks for the feedback" — get to the substance immediately.
 - Do not repeat the reviewer's comment back to them.
 
+Write every reply to `<cache_dir>/cr_replies_{pr_id}.json` as a JSON list of `{id, kind, reply, text}` (`kind` and `text`, the original comment's body, carried over from `unanswered`). Write it with a quoted heredoc so the shell expands nothing in the text:
+
+```bash
+cat > "<cache_dir>/cr_replies_{pr_id}.json" <<'CR_REPLIES_EOF'
+[{"id": 123, "kind": "review", "reply": "Fixed: ...", "text": "..."}]
+CR_REPLIES_EOF
+python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "<cache_dir>/cr_replies_{pr_id}.json"   # must parse
+```
+
 ---
 
 ## Step 5 — Post or dry-run
 
-In `mode: post`, skip Steps 1–4: `replies_file` is a JSON list of `{id, kind, reply, text}` composed by the skill after it fixed the code. First re-fetch the comments (Step 1, item 2) and drop any `id` that now has a reply from the PR author, so a retry never double-posts; then post the rest exactly as below.
+In `mode: post`, skip Steps 1–4: `replies_file` is a JSON list of `{id, kind, reply, text}` — the file Step 4 wrote, or one the skill composed after it fixed the code. First re-fetch the comments (Step 1, item 2) and drop any `id` that now has a reply from the PR author, so a retry never double-posts; then post the rest exactly as below.
 
 ### If `dry_run: true`
 
@@ -285,7 +303,7 @@ Print each proposed reply:
 <reply text>
 ```
 
-Final message: "Dry run — <n> replies ready. Re-run without --dry-run to post."
+Final message: "Dry run — <n> replies ready in `<cache_dir>/cr_replies_{pr_id}.json`." The skill shows them to the user and posts them with `mode: post` after approval.
 
 ### Otherwise
 
@@ -296,6 +314,8 @@ import urllib.request, urllib.error, json, base64, time, os
 
 pr_id = "{pr_id}"
 host  = "{host}"
+with open("{replies_file}") as f:   # mode reply: <cache_dir>/cr_replies_{pr_id}.json
+    replies = json.load(f)
 
 if host == "github":
     owner, repo = os.environ["GITHUB_OWNER"], os.environ["GITHUB_REPO"]
@@ -313,8 +333,6 @@ else:
     BASE = f"https://api.bitbucket.org/2.0/repositories/{ws}/{repo}/pullrequests/{pr_id}/comments"
     headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
 
-# replies = list of {id, kind, reply, text} built during Step 4
-# (kind and text — the original comment's body — both carried over from `unanswered`)
 ok, fail = 0, 0
 for r in replies:
     if host == "github":

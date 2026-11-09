@@ -4,7 +4,10 @@ extract_pr_links — extract Jira ticket keys, Confluence page IDs, and external
 repo hints from the combined PR text surface (title, description, branch, commits).
 
 SCHEMA_IN
-  stdin   concatenated text (title + description + source_branch + commit_messages)
+  --pr-json=PATH  output of bb_pr_fetch.sh / gh_pr_fetch.sh saved to a file (preferred:
+                  the PR text never passes through a shell command line)
+  stdin   otherwise: concatenated text (title + description + source_branch, then
+          "|||COMMITS|||", then commit_messages)
   env     JIRA_BASE_URL           (used to scope Confluence URL matching)
           CONFLUENCE_BASE_URL     (optional; falls back to JIRA_BASE_URL host)
           PR_REVIEW_CACHE_DIR     (required — per-invocation cache dir, see pr-review SKILL.md Step 0)
@@ -28,7 +31,14 @@ if not cache_dir:
     sys.exit(1)
 os.makedirs(cache_dir, exist_ok=True)
 
-text = sys.stdin.read()
+pr_json = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--pr-json=")), "")
+if pr_json:
+    with open(pr_json) as f:
+        pr = json.load(f)
+    text = (f"{pr.get('title', '')} {pr.get('description', '')} {pr.get('source_branch', '')}"
+            "|||COMMITS|||" + "\n".join(pr.get("commit_messages", [])))
+else:
+    text = sys.stdin.read()
 
 jira_base = os.environ.get("JIRA_BASE_URL", "")
 conf_base = os.environ.get("CONFLUENCE_BASE_URL", jira_base)

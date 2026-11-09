@@ -68,6 +68,11 @@ def git(repo, *args):
         return ""
 
 
+def origin_url(repo):
+    """origin's URL without any user:password@ part, so a token never reaches docs or output."""
+    return re.sub(r"(https?://)[^/@\s]+@", r"\1", git(repo, "remote", "get-url", "origin"))
+
+
 def repos(root):
     return sorted(p for p in root.iterdir() if p.is_dir() and (p / ".git").exists())
 
@@ -106,7 +111,7 @@ def cmd_inventory(root, _a):
     for r in repos(root):
         out["repos"].append({
             "name": r.name,
-            "remote": git(r, "remote", "get-url", "origin"),
+            "remote": origin_url(r),
             "branch": git(r, "rev-parse", "--abbrev-ref", "HEAD"),
             "head": git(r, "log", "-1", "--format=%h %cs %s"),
             "head_date": git(r, "log", "-1", "--format=%cs"),
@@ -287,7 +292,7 @@ def cmd_baseline(root, a):
             ref = default_ref(r)
             if not ref:
                 print(f"{r.name}: no origin default branch, skipped"); continue
-            base[r.name] = {"remote": git(r, "remote", "get-url", "origin"), "branch": ref.split("/", 1)[1],
+            base[r.name] = {"remote": origin_url(r), "branch": ref.split("/", 1)[1],
                             "commit": git(r, "rev-parse", ref), "date": git(r, "log", "-1", "--format=%cs", ref),
                             "recorded": TODAY}
         for gone in [n for n in base if not (root / n / ".git").exists()]:
@@ -357,8 +362,8 @@ def repo_changes(root, r, base, texts):
     res = {"repo": r.name, "ref": ref, "head": git(r, "rev-parse", "--short", ref) if ref else "", "core": {}}
     if not ref:
         res["error"] = "no origin default branch"; return res
-    if b and b.get("remote") and b["remote"] != git(r, "remote", "get-url", "origin"):
-        res["core"]["remote"] = [f"{b['remote']} -> {git(r, 'remote', 'get-url', 'origin')}"]
+    if b and b.get("remote") and b["remote"] != origin_url(r):
+        res["core"]["remote"] = [f"{b['remote']} -> {origin_url(r)}"]
     if b and b.get("branch") and b["branch"] != ref.split("/", 1)[1]:
         res["core"]["default branch"] = [f"{b['branch']} -> {ref.split('/', 1)[1]}"]
     if not b or not git(r, "rev-parse", "--verify", "--quiet", b["commit"] + "^{commit}"):
@@ -513,7 +518,7 @@ def cmd_audit(root, a):
 
 # ---------------------------------------------------------------- scaffold
 STUBS = {
-    "service": ("docs/services/{name}.md", "# {name}\n\n**What it is:** {summary}. (family: <family>)\n**Top review risks:** <risks>\n**Related:** <`docs/services/x.md`>\n**Code:** `{root}/{name}/` · **Index:** `docs/services/README.md` · **Workspace map:** root `CLAUDE.md` §2-§3 · **Lookups:** `docs/lookups.md`\n\n---\n\n- **Stack:** <>\n- **CI/deploy:** <>\n- **Structure:** <>\n- **Data:** <>\n- **Auth:** <>\n- **Commands:** <>; single `<>`\n- **Review hotspots:** <>\n- **Drift:** <>\n"),
+    "service": ("docs/services/{name}.md", "# {name}\n\n**What it is:** {summary}. (family: <family>)\n**Top review risks:** <risks>\n**Related:** <`docs/services/x.md`>\n**Code:** `{name}/` · **Index:** `docs/services/README.md` · **Workspace map:** root `CLAUDE.md` §2-§3 · **Lookups:** `docs/lookups.md`\n\n---\n\n- **Stack:** <>\n- **CI/deploy:** <>\n- **Structure:** <>\n- **Data:** <>\n- **Auth:** <>\n- **Commands:** <>; single `<>`\n- **Review hotspots:** <>\n- **Drift:** <>\n"),
     "recipe": ("docs/recipes/{name}.md", "# Recipe: {title}\n\nIndex: `docs/recipes/README.md`. Source: <page title + link>, read {today}.\n\n1. <step with exact command>\n\n## Gotchas\n- <>\n"),
     "lookup": ("docs/lookups/{name}.md", "# Lookups §{section}: {title}\n\nIndex: `docs/lookups.md`.\n\n| <Key> | Owner / producer | Also touched by / consumer | Notes |\n|---|---|---|---|\n"),
     "connection": ("docs/connections/{name}.md", "# Connections: {title}\n\nRoot `CLAUDE.md` §3. Tables: `docs/lookups.md`.\n\n```\n<caller> ─<mechanism>─► <callee>\n```\n\n## Points that bite\n- **<name>:** <>\n"),

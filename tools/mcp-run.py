@@ -28,6 +28,12 @@ Placeholders are expanded in --env values and in the command/args. --env
 variables whose expanded value is empty are not exported at all, so
 `docker run -e VAR` forwards nothing rather than an empty string.
 
+The server gets only the credentials it asks for: the inherited environment is
+passed on without every key defined in .claude/.env and without any variable with
+a secret-looking name (*TOKEN*, *SECRET*, *PASSWORD*, *API_KEY*, ...), then the
+--env pairs are added. A server started with `npx`/`uvx` runs on the host, and
+its dependencies resolve fresh on every start.
+
 Project dir: the cwd (Claude Code starts stdio servers there), else
 $CLAUDE_PROJECT_DIR.
 """
@@ -42,6 +48,7 @@ import sys
 from pathlib import Path
 
 PLACEHOLDER = re.compile(r"\{\{([A-Za-z0-9_]+)(?:\|([^}]*))?\}\}")
+SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL", re.I)
 
 
 def load_sync_env():
@@ -127,7 +134,8 @@ def main(argv: list[str]) -> int:
             return ""
         return PLACEHOLDER.sub(sub, text)
 
-    child_env = dict(os.environ)
+    child_env = {k: v for k, v in os.environ.items()
+                 if k not in file_env and not SECRET_NAME.search(k)}
     for name, raw in pairs:
         expanded = expand(raw)
         if expanded:

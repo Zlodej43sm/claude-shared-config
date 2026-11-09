@@ -81,4 +81,4 @@ Missing answers are findings; phrase them as the question a reviewer would ask.
 - Read-only: don't edit, post or resolve threads unless the user asks.
 
 ## Learning from reviewers
-When a human reviewer's comments on a doc reveal an expectation this skill doesn't cover, add it here as a generic rule in the right § (no names, no project data); project-specific expectations go to the project's own docs-conventions file instead. Keep this file short: merge with an existing bullet before adding a new one.
+When a human reviewer's comments on a doc reveal an expectation this skill doesn't cover, propose a generic rule for the right § (no names, no project data) and add it here only after the user agrees: this file is shared by every linked project. Project-specific expectations go to the project's own docs-conventions file instead. Keep this file short: merge with an existing bullet before adding a new one.

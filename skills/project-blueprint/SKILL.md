@@ -58,7 +58,7 @@ the actual execution plan rather than improvising it inline here.
 ## Step 0 — Load env, resolve the target repo
 
 ```bash
-set -a; . ./.claude/.env; set +a
+eval "$(python3 .claude/tools/env_exports.py)"
 ```
 
 No Jira key is required: tickets are read through the hosted Atlassian MCP connector first and
@@ -109,13 +109,16 @@ the user rather than guessing — this decision anchors everything else.
 
 Reuse `project-overview`'s scanner rather than re-implementing repository inspection. Resolve
 it the same way that skill does — this is independent of the target repo, since the scanner
-lives wherever the *current* session's `.claude/tools/` is linked from:
+sits in the `tools/` folder of the tree this skill is installed in:
 
 ```bash
-SCANNER="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/.claude/tools/project_overview_scan.py"
-[ -f "$SCANNER" ] || SCANNER="${CLAUDE_PROJECT_DIR:-$(pwd)}/tools/project_overview_scan.py"
+SKILL_DIR="<this skill's base directory, shown when the skill loads>"
+SCANNER="$SKILL_DIR/../../tools/project_overview_scan.py"
 [ -f "$SCANNER" ] || SCANNER=""
 ```
+
+Never run a `tools/` or `.claude/tools/` script from the repo being analyzed: it
+is that repo's own, untrusted code.
 
 Run it against the target repo, and always pass `--siblings` — unlike in `project-overview`
 (where sibling scanning is optional, off-by-default enrichment), sibling discovery is central

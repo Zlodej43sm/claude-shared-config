@@ -1,6 +1,7 @@
 ---
 name: jira-context
 description: 'Fetches a Jira ticket and exhaustively pulls every Confluence page referenced in the description, remote links, or linked pages (two levels deep) — full bodies, classified by type. Also reads CLAUDE.md from the primary repo and any related repos provided. Returns a single structured context block for use by planning or review agents.'
+disallowedTools: 'Write, Edit, NotebookEdit, Agent'
 model: haiku
 color: blue
 ---
@@ -18,7 +19,7 @@ You receive:
 ## Step 1 — Load settings
 
 ```bash
-set -a; [ -f <project_root>/.claude/.env ] && . <project_root>/.claude/.env; set +a
+eval "$(CLAUDE_PROJECT_DIR=<project_root> python3 <project_root>/.claude/tools/env_exports.py)"
 ```
 
 Nothing is required. `JIRA_BASE_URL` picks the site (else the first site from `getAccessibleAtlassianResources`); `JIRA_WORKSPACE` only resolves bare numbers; `CONFLUENCE_BASE_URL` defaults to `$JIRA_BASE_URL/wiki`. `JIRA_EMAIL` + `JIRA_API_TOKEN` are used only by paths 2 and 3 below, and count as unset when empty or a placeholder (`replace-with-…`, `your-…`). Never echo tokens.
@@ -67,7 +68,8 @@ Build a `seen` set of Confluence URLs. Collect URLs from all of these sources:
 **b) Remote links** — from path 1 (Step 2) or the REST `remote_links` array when either was used. Only when neither gave them and a token is set, call:
 
 ```bash
-curl -sS -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+. <project_root>/.claude/tools/curl_auth.sh
+curl -sS -K <(curl_basic_auth "$JIRA_EMAIL" "$JIRA_API_TOKEN") \
   -H "Accept: application/json" \
   "$JIRA_BASE_URL/rest/api/3/issue/$TICKET_KEY/remotelink" \
   | python3 -c "
@@ -98,7 +100,7 @@ tool: mcp__atlassian__confluence_get_page
 args: { "url": "<url>" }
 ```
 
-**REST fallback (path 3):** `python3 <project_root>/.claude/tools/atlassian_fetch.py confluence "<url>"` — use its `title` and `markdown`; scan `confluence_links` for depth-2 URLs instead of the body.
+**REST fallback (path 3):** take the page id from the URL (the digits after `/pages/`), check it is digits only, and run `python3 <project_root>/.claude/tools/atlassian_fetch.py confluence '<ID>'`. Never pass the URL itself to the shell: it comes from a page body, and `$(…)` inside double quotes would run. Use its `title` and `markdown`; scan `confluence_links` for depth-2 URLs instead of the body.
 
 On 403/404, record `(access denied / not found)` and continue.
 
@@ -121,7 +123,7 @@ A page may have multiple types (e.g. a spec that lists AC items).
 Read the following files from `project_root` (use the Read tool):
 
 1. `CLAUDE.md` — full content.
-2. `.claude/.env` header (first 30 lines only — just to confirm workspace/repo slug; never echo tokens).
+2. Workspace and repo slug from the environment loaded in Step 1: `printenv JIRA_WORKSPACE BITBUCKET_WORKSPACE BITBUCKET_REPO_SLUG GITHUB_OWNER GITHUB_REPO`. Never read `.claude/.env` itself: it can hold plaintext tokens.
 3. **CI pipeline** — check for each of the following and read the first one found:
    - `bitbucket-pipelines.yml`
    - `.github/workflows/` (list directory, read the most relevant workflow file)

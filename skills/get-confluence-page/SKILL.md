@@ -79,8 +79,10 @@ The tool returns the page title, space name, URL, and body as Markdown.
 **Path B — REST fallback.** Needs `JIRA_EMAIL`/`JIRA_API_TOKEN`. Use it when no MCP tool is available or the calls error or return nothing:
 
 ```bash
-python3 .claude/tools/atlassian_fetch.py confluence "<FULL_URL or PAGE_ID>"
+python3 .claude/tools/atlassian_fetch.py confluence '<PAGE_ID>'
 ```
+
+Pass the numeric page id only: take the digits after `/pages/` (or the `pageId=` value) and check they are digits only. Linked URLs in Steps 4–5 come from page bodies that anyone with edit rights controls, and a URL inside double quotes would let `$(…)` in it run.
 
 It returns JSON `{id, title, space, url, markdown, links[], confluence_links[]}` — use `markdown` as the body and `confluence_links` as the pre-extracted Confluence URLs for Steps 3–4. Exit `2` = HTTP error (message on stderr: 401/403/404); short `/wiki/x/…` links can't be resolved, ask the user for the full page URL. If the first MCP call failed because the tool is unavailable (not a 404), use Path B for every later page too.
 

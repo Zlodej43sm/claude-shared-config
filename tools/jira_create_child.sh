@@ -2,9 +2,13 @@
 # jira_create_child — create a single Jira issue, optionally as a child of a parent issue
 #
 # SCHEMA_IN
-#   --summary=TEXT         Issue summary (required)
-#   --description=TEXT     Plain-text description; converted to Atlassian Document
-#                          Format, one paragraph per blank-line-separated block (optional)
+#   --summary-file=F       Issue summary, read from file F (required, or --summary)
+#   --summary=TEXT         Issue summary inline
+#   --description-file=F   Plain-text description, read from file F; converted to Atlassian
+#                          Document Format, one paragraph per blank-line-separated block (optional)
+#   --description=TEXT     The description inline. Prefer the -file options for text drafted
+#                          from tickets, pages or PRs: in a double-quoted shell argument,
+#                          backticks and $(...) run as commands
 #   --parent=KEY           Parent issue key, e.g. PROJ-29 (optional — omit for a top-level issue)
 #   --issuetype=NAME       Issue type name (optional; default "Task")
 #   --project=KEY          Project key (optional; default $JIRA_WORKSPACE)
@@ -24,11 +28,13 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
-SUMMARY="" DESCRIPTION="" PARENT="" ISSUETYPE="Task" PROJECT="${JIRA_WORKSPACE:-}" REPORTER="" ASSIGNEE="" DRY_RUN=""
+SUMMARY="" DESCRIPTION="" SUMMARY_FILE="" DESCRIPTION_FILE="" PARENT="" ISSUETYPE="Task" PROJECT="${JIRA_WORKSPACE:-}" REPORTER="" ASSIGNEE="" DRY_RUN=""
 for arg in "$@"; do
   case "$arg" in
     --summary=*)     SUMMARY="${arg#*=}"     ;;
     --description=*) DESCRIPTION="${arg#*=}" ;;
+    --summary-file=*)     SUMMARY_FILE="${arg#*=}"     ;;
+    --description-file=*) DESCRIPTION_FILE="${arg#*=}" ;;
     --parent=*)      PARENT="${arg#*=}"      ;;
     --issuetype=*)   ISSUETYPE="${arg#*=}"   ;;
     --project=*)     PROJECT="${arg#*=}"     ;;
@@ -38,7 +44,15 @@ for arg in "$@"; do
   esac
 done
 
-[[ -z "$SUMMARY" ]] && { echo "ERROR: --summary is required" >&2; exit 1; }
+if [[ -n "$SUMMARY_FILE" ]]; then
+  [[ -f "$SUMMARY_FILE" ]] || { echo "ERROR: --summary-file not found: $SUMMARY_FILE" >&2; exit 1; }
+  SUMMARY=$(cat "$SUMMARY_FILE")
+fi
+if [[ -n "$DESCRIPTION_FILE" ]]; then
+  [[ -f "$DESCRIPTION_FILE" ]] || { echo "ERROR: --description-file not found: $DESCRIPTION_FILE" >&2; exit 1; }
+  DESCRIPTION=$(cat "$DESCRIPTION_FILE")
+fi
+[[ -z "$SUMMARY" ]] && { echo "ERROR: --summary-file or --summary is required" >&2; exit 1; }
 [[ -z "$PROJECT" ]] && { echo "ERROR: --project or \$JIRA_WORKSPACE is required" >&2; exit 1; }
 if [[ -z "${JIRA_BASE_URL:-}" || -z "${JIRA_EMAIL:-}" || -z "${JIRA_API_TOKEN:-}" ]]; then
   echo "ERROR: JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN must be set" >&2

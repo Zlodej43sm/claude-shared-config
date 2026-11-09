@@ -65,8 +65,13 @@ new_pages: list[dict[str, str]] = []
 
 SKIP_LINK_TYPES = {"cloners", "duplicates", "is duplicated by", "is cloned by", "is cloned from"}
 
+JIRA_KEY = re.compile(r"[A-Za-z][A-Za-z0-9_]*-\d+")
+
 def _add_key(key: str, via: str) -> None:
-    if key and key not in fetched_keys and f"jira:{key}" not in registry:
+    # customfield_10014 is the epic link only on some Jira sites; elsewhere it can hold any text
+    if not isinstance(key, str) or not JIRA_KEY.fullmatch(key):
+        return
+    if key not in fetched_keys and f"jira:{key}" not in registry:
         new_keys.append({"key": key, "via": via})
         fetched_keys.add(key)
         registry[f"jira:{key}"] = via

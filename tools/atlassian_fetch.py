@@ -28,7 +28,8 @@ SCHEMA_OUT  stdout JSON
                 "links": [absolute http(s) urls in the body],
                 "confluence_links": [the subset that are Confluence page urls] }
   check:      { "ok": bool, "jira": {"status", "user"}, "confluence": {"status"} }
-  Never prints a credential. Read-only (GETs only).
+  Never prints a credential, and never sends one to another origin on a redirect.
+  Read-only (GETs only).
 
 EXIT  0=ok  1=bad-args / missing env  2=http or network error (message on stderr:
       401 bad email/token, 403 no access, 404 not found)
@@ -227,11 +228,25 @@ def env(name: str, required: bool = True) -> str:
     return value.rstrip("/")
 
 
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib copies every header, Authorization included, to wherever a redirect
+    points. Keep it only for a same-origin hop (same scheme, host and port)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urlsplit(newurl)[:2] != urlsplit(req.full_url)[:2]:
+            new.headers.pop("Authorization", None)
+        return new
+
+
+OPENER = urllib.request.build_opener(_StripAuthOnRedirect)
+
+
 def get(url: str):
     cred = base64.b64encode(f"{env('JIRA_EMAIL')}:{env('JIRA_API_TOKEN')}".encode()).decode()
     req = urllib.request.Request(url, headers={"Authorization": f"Basic {cred}", "Accept": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with OPENER.open(req, timeout=20) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         hint = {401: "credentials rejected - check JIRA_EMAIL / JIRA_API_TOKEN",

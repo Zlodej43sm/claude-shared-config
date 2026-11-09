@@ -92,8 +92,10 @@ Tool names can differ by server version — use ToolSearch (`notion`) to confirm
 **2c — REST script.**
 
 ```bash
-.claude/tools/notion_fetch_page.sh "<URL-or-ID>"
+.claude/tools/notion_fetch_page.sh '<URL-or-ID>'
 ```
+
+For linked pages (Step 3) pass the `linked_pages[].id` (32 hex characters), never its `url`: the URL comes from the page body.
 
 Output JSON: `kind` (`page` | `database`), `title`, `url`, `markdown`, `linked_pages[]` (`{id, url}`), `truncated`; databases also carry `rows[]` (`{id, title, url}`).
 

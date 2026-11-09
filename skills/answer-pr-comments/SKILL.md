@@ -1,13 +1,13 @@
 ---
 name: answer-pr-comments
-description: Answer unanswered human reviewer comments on a Bitbucket or GitHub PR. By default composes and posts replies (delegated to the comment-responder agent); with --fix it also verifies each comment against the code, fixes what is valid, argues with evidence what is not, runs the project's checks, and posts the replies after one confirmation. Usage: /answer-pr-comments <pr-number> [<reviewer-name>] [--dry-run] [--fix]
+description: Answer unanswered human reviewer comments on a Bitbucket or GitHub PR. By default composes replies (delegated to the comment-responder agent), shows them and posts after one confirmation; with --fix it also verifies each comment against the code, fixes what is valid, argues with evidence what is not, runs the project's checks, and posts the replies after one confirmation. Usage: /answer-pr-comments <pr-number> [<reviewer-name>] [--dry-run] [--fix]
 ---
 
 # answer-pr-comments
 
 Entry point. Validates credentials, resolves the git host and PR number, then either:
 
-- **reply mode** (default): delegates everything to the `comment-responder` agent. Do **not** fetch comments, read files, compose replies, or post to Bitbucket/GitHub yourself.
+- **reply mode** (default): the `comment-responder` agent researches and composes the replies; you show them and ask once; the agent posts what the user approved. Do **not** fetch comments, read files, compose replies, or post to Bitbucket/GitHub yourself.
 - **fix mode** (`--fix`): the agent only *collects* the unanswered comments and later *posts* the replies; you (the main loop, which has Edit/Write) triage, fix and verify in between. See "Fix mode" below.
 
 ---
@@ -20,7 +20,7 @@ Entry point. Validates credentials, resolves the git host and PR number, then ei
 
 - `<pr-number>` — required. Bare integer (`48`) or `#48`.
 - `<reviewer-name>` — optional. Case-insensitive substring of `display_name` (e.g. `"Jane"` matches `"Jane Doe"`). Omit to reply to all human reviewers.
-- `--dry-run` — passed through to the agent; it prints proposed replies without posting. With `--fix` it means: do the triage, edits and checks, show the replies, but do not commit, push or post.
+- `--dry-run` — show the proposed replies and stop; nothing is posted and no question is asked. With `--fix` it means: do the triage, edits and checks, show the replies, but do not commit, push or post.
 - `--fix` — address the comments instead of only replying: fix valid ones in the working tree, push back on invalid ones with evidence. Requires the PR's source branch to be checked out.
 
 ---
@@ -28,7 +28,7 @@ Entry point. Validates credentials, resolves the git host and PR number, then ei
 ## Step 0 — Load credentials, resolve host, and validate
 
 ```bash
-set -a; . .claude/.env; set +a
+eval "$(python3 .claude/tools/env_exports.py)"
 HOST=$(.claude/tools/detect_git_host.sh) || HOST=""
 CACHE_DIR=$(mktemp -d)   # private; pass it to the agent, never use fixed /tmp names
 ```
@@ -46,7 +46,7 @@ If any key is missing or a placeholder, tell the user which key to fix and **sto
 Parse `<pr-number>` from args (strip leading `#`). If args is empty, look up the open PR for the current branch via the host-appropriate lookup tool:
 
 ```bash
-set -a; . .claude/.env; set +a
+eval "$(python3 .claude/tools/env_exports.py)"
 BRANCH=$(git branch --show-current)
 if [ "$HOST" = "github" ]; then
   .claude/tools/gh_pr_lookup.sh "$BRANCH"
@@ -67,7 +67,7 @@ On 401/403 → stop, tell the user to check `BITBUCKET_EMAIL`/`BITBUCKET_API_TOK
 
 ## Step 2 — Delegate to the `comment-responder` agent (reply mode)
 
-With `--fix`, skip to "Fix mode" below. Otherwise use the Agent tool with `subagent_type: "comment-responder"`. The agent handles everything from here: fetching comments, filtering, reading code, composing replies, and posting. Do **not** pass tokens in the prompt.
+With `--fix`, skip to "Fix mode" below. Otherwise use the Agent tool with `subagent_type: "comment-responder"`. The agent fetches the comments, filters them, reads the code and composes the replies into `$CACHE_DIR/cr_replies_<pr>.json`, without posting (`dry_run: true`). Do **not** pass tokens in the prompt.
 
 **Prompt template:**
 
@@ -79,7 +79,7 @@ Answer unanswered reviewer comments on a <Bitbucket|GitHub> PR.
   repo:            <BITBUCKET_REPO_SLUG, or GITHUB_REPO when host=github>
   pr_id:           <PR_ID>
   reviewer_filter: <REVIEWER_NAME or empty>
-  dry_run:         <true|false>
+  dry_run:         true
   project_root:    <absolute path to repo root>
   cache_dir:       <CACHE_DIR>
   mode:            reply
@@ -87,7 +87,7 @@ Answer unanswered reviewer comments on a <Bitbucket|GitHub> PR.
 Run your full procedure (Steps 0–5) and return your completion summary as your final message.
 ```
 
-Surface the agent's final message verbatim.
+Show the agent's proposed replies. With `--dry-run`, stop here. Otherwise ask one question: post all, post some (the user names which), or post none. Then spawn the agent again with the same prompt but `mode: post`, `dry_run: false` and `replies_file: $CACHE_DIR/cr_replies_<pr>.json`, after removing any reply the user did not approve from that file. Surface its final message verbatim.
 
 ---
 
@@ -103,7 +103,7 @@ git status --porcelain             # uncommitted changes: tell the user before e
 git fetch -q origin && git rev-list --left-right --count HEAD...origin/<source-branch>   # behind > 0: stop and say so
 ```
 
-Read the project `CLAUDE.md` / contributing docs for the checks to run (typecheck, lint, format, tests) and any coding standards, including any review checklist it or the workspace-root `CLAUDE.md` points to, or a project-local skill in `.claude/skills/` covers (e.g. a DB migration checklist). A fix that touches a migration is re-checked against that checklist item by item, not only against the comment that asked for it. Note the PR's destination branch and whether sibling repositories are checked out next to this one (read-only references, see F2).
+Read the project `CLAUDE.md` / contributing docs for the checks to run (typecheck, lint, format, tests) and any coding standards, including any review checklist it or the workspace-root `CLAUDE.md` points to (e.g. a DB migration checklist). A fix that touches a migration is re-checked against that checklist item by item, not only against the comment that asked for it. Note the PR's destination branch and whether sibling repositories are checked out next to this one (read-only references, see F2).
 
 ### F1 — Collect
 
@@ -174,43 +174,44 @@ When you (the main loop, not the agent) fix code in response to a reviewer comme
 1. Look up the original comment ID if you don't already have it. On GitHub, also note whether it's an inline **review** comment or a general **issue** comment — the reply mechanism differs between the two:
 
     ```bash
-    set -a; . .claude/.env; set +a
+    eval "$(python3 .claude/tools/env_exports.py)"
+    . .claude/tools/curl_auth.sh   # credentials go through a pipe, never the command line
     if [ "$HOST" = "github" ]; then
-      # Inline review comments — repliable via the /replies endpoint in step 2.
-      curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
-        "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_OWNER/$GITHUB_REPO/pulls/{pr_id}/comments?per_page=100" \
+      API="${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_OWNER/$GITHUB_REPO"
+      # Inline review comments — repliable with --reply-to in step 2.
+      curl -sSL -K <(curl_bearer_auth "$GITHUB_TOKEN") -H "Accept: application/vnd.github+json" \
+        "$API/pulls/{pr_id}/comments?per_page=100" \
         | python3 -c "import sys,json; [print(c['id'], 'review', c['user']['login'], c['body'][:60]) for c in json.load(sys.stdin)]"
       # General issue-thread comments — no native reply; see step 2's GitHub/issue case.
-      curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
-        "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_OWNER/$GITHUB_REPO/issues/{pr_id}/comments?per_page=100" \
+      curl -sSL -K <(curl_bearer_auth "$GITHUB_TOKEN") -H "Accept: application/vnd.github+json" \
+        "$API/issues/{pr_id}/comments?per_page=100" \
         | python3 -c "import sys,json; [print(c['id'], 'issue', c['user']['login'], c['body'][:60]) for c in json.load(sys.stdin)]"
     else
-      curl -sSL -u "$BITBUCKET_EMAIL:$BITBUCKET_API_TOKEN" \
+      curl -sSL -K <(curl_basic_auth "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN") \
         "https://api.bitbucket.org/2.0/repositories/$BITBUCKET_WORKSPACE/$BITBUCKET_REPO_SLUG/pullrequests/{pr_id}/comments?pagelen=100" \
         | python3 -c "import sys,json; [print(c['id'], c['user']['display_name'], c['content']['raw'][:60]) for c in json.load(sys.stdin)['values']]"
     fi
     ```
 
-2. Post the reply:
+2. Show the reply and post it only after the user confirms. Write the text to a file with a quoted heredoc, so the shell expands nothing in it (replies often quote code or the reviewer), then pass the file:
 
-    - **Bitbucket** — a `parent` field on a normal comment POST:
+    ```bash
+    cat > "$CACHE_DIR/reply.md" <<'REPLY_EOF'
+    <reply text>
+    REPLY_EOF
+    ```
+
+    - **Bitbucket** — a threaded reply under the original:
         ```bash
-        curl -sSL --fail-with-body -u "$BITBUCKET_EMAIL:$BITBUCKET_API_TOKEN" \
-          -X POST -H "Content-Type: application/json" \
-          -d '{"content":{"raw":"<reply text>"},"parent":{"id":<PARENT_COMMENT_ID>}}' \
-          "https://api.bitbucket.org/2.0/repositories/$BITBUCKET_WORKSPACE/$BITBUCKET_REPO_SLUG/pullrequests/{pr_id}/comments"
+        .claude/tools/bb_post_comment.sh --pr-id={pr_id} --parent=<PARENT_COMMENT_ID> --body-file="$CACHE_DIR/reply.md"
         ```
     - **GitHub, original was an inline review comment** — the dedicated replies endpoint:
         ```bash
-        curl -sSL --fail-with-body -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
-          -X POST -d '{"body":"<reply text>"}' \
-          "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_OWNER/$GITHUB_REPO/pulls/{pr_id}/comments/<PARENT_COMMENT_ID>/replies"
+        .claude/tools/gh_post_comment.sh --pr-id={pr_id} --reply-to=<PARENT_COMMENT_ID> --body-file="$CACHE_DIR/reply.md"
         ```
-    - **GitHub, original was a general issue comment** — GitHub has no threading for issue-level comments, so there is no true "reply". Post a new general comment that quotes the original so the connection is visible in the UI, and tell the user this is a best-effort thread, not a native GitHub reply:
+    - **GitHub, original was a general issue comment** — GitHub has no threading for issue-level comments, so there is no true "reply". Start `reply.md` with the first ~80 characters of the original comment as a `> ` quote, then a blank line, then the reply, and post it as a new general comment; tell the user this is a best-effort thread, not a native GitHub reply:
         ```bash
-        curl -sSL --fail-with-body -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
-          -X POST -d '{"body":"> <first ~80 chars of original comment>\n\n<reply text>"}' \
-          "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_OWNER/$GITHUB_REPO/issues/{pr_id}/comments"
+        .claude/tools/gh_post_comment.sh --pr-id={pr_id} --body-file="$CACHE_DIR/reply.md"
         ```
 
 ---
@@ -218,6 +219,6 @@ When you (the main loop, not the agent) fix code in response to a reviewer comme
 ## Constraints
 
 - **One PR-lookup call max.** The branch-to-PR lookup tool call in Step 1 is the only API call the skill itself makes. All fetching and posting belongs to the agent (Step 2, or Fix mode's `collect` and `post`) or uses the threaded pattern above (Step 3).
-- **Nothing outward without confirmation in fix mode.** Commit, push and posting happen once, after F6's single approval. Never force-push; never edit another repository.
-- **Always thread replies.** Never post a follow-up as a bare top-level comment — Bitbucket via `"parent":{"id":<id>}`, GitHub inline comments via the `/replies` endpoint, GitHub issue comments via an explicit quote of the original (GitHub's closest equivalent, since issue comments have no native threading).
+- **Nothing outward without confirmation.** Reply mode posts only after Step 2's question; fix mode commits, pushes and posts once, after F6's single approval; a Step 3 follow-up posts after the user confirms it. Never force-push; never edit another repository.
+- **Always thread replies.** Never post a follow-up as a bare top-level comment — Bitbucket via `--parent`, GitHub inline comments via `--reply-to` (the `/replies` endpoint), GitHub issue comments via an explicit quote of the original (GitHub's closest equivalent, since issue comments have no native threading).
 - **No token leaks.** Never echo, log, or include tokens in the agent prompt.

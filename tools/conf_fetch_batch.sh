@@ -8,6 +8,7 @@
 #
 # SCHEMA_OUT  stdout JSON
 #   { "fetched": ["12345", ...], "not_found": ["99999", ...] }
+#   An id that is not all digits is never fetched and is listed in not_found.
 #   Side-effects: $PR_REVIEW_CACHE_DIR/conf_{PAGE_ID}.json per page
 #                 (fields: id, title, space.key, body.export_view.value)
 #
@@ -22,6 +23,15 @@ mkdir -p "$PR_REVIEW_CACHE_DIR"
 
 CONF_API="${JIRA_BASE_URL}/wiki/rest/api"
 STATUS_DIR=$(mktemp -d)
+trap 'rm -rf "$STATUS_DIR"' EXIT
+
+# Ids reach this script from PR text and fetched page bodies; only a numeric id
+# may become a URL path segment and part of an output file name.
+VALID=() INVALID=()
+for ID in "$@"; do
+  if [[ "$ID" =~ ^[0-9]+$ ]]; then VALID+=("$ID"); else INVALID+=("$ID"); fi
+done
+set -- ${VALID[@]+"${VALID[@]}"}
 
 fetch_one() {
   local ID="$1"
@@ -44,11 +54,12 @@ for ID in "$@"; do
   fi
 done
 
-python3 - "${STATUS_DIR}" "$@" <<'PY'
+python3 - "${STATUS_DIR}" "$@" -- ${INVALID[@]+"${INVALID[@]}"} <<'PY'
 import json, sys, os
 status_dir = sys.argv[1]
-ids = sys.argv[2:]
-fetched, not_found = [], []
+split = sys.argv.index("--")
+ids, invalid = sys.argv[2:split], sys.argv[split + 1:]
+fetched, not_found = [], list(invalid)
 for pid in ids:
     sc = open(os.path.join(status_dir, pid)).read().strip() if os.path.exists(os.path.join(status_dir, pid)) else "0"
     (fetched if sc == "200" else not_found).append(pid)

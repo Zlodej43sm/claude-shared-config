@@ -8,6 +8,7 @@
 #
 # SCHEMA_OUT  stdout JSON
 #   { "fetched": ["PROJ-22", ...], "not_found": ["PROJ-99", ...] }
+#   A key that is not KEY-123 shaped is never fetched and is listed in not_found.
 #   Side-effects:
 #     $PR_REVIEW_CACHE_DIR/jira_{KEY}.json               — ticket data (expand=renderedFields)
 #     $PR_REVIEW_CACHE_DIR/jira_remotelinks_{KEY}.json   — formally attached web links
@@ -22,6 +23,15 @@ set -uo pipefail
 mkdir -p "$PR_REVIEW_CACHE_DIR"
 
 STATUS_DIR=$(mktemp -d)
+trap 'rm -rf "$STATUS_DIR"' EXIT
+
+# Keys reach this script from PR text and Jira API fields; only a well-formed key
+# may become a URL path segment and part of an output file name.
+VALID=() INVALID=()
+for KEY in "$@"; do
+  if [[ "$KEY" =~ ^[A-Za-z][A-Za-z0-9_]*-[0-9]+$ ]]; then VALID+=("$KEY"); else INVALID+=("$KEY"); fi
+done
+set -- ${VALID[@]+"${VALID[@]}"}
 
 fetch_one() {
   local KEY="$1"
@@ -52,11 +62,12 @@ for KEY in "$@"; do
   fi
 done
 
-python3 - "${STATUS_DIR}" "$@" <<'PY'
+python3 - "${STATUS_DIR}" "$@" -- ${INVALID[@]+"${INVALID[@]}"} <<'PY'
 import json, sys, os
 status_dir = sys.argv[1]
-keys = sys.argv[2:]
-fetched, not_found = [], []
+split = sys.argv.index("--")
+keys, invalid = sys.argv[2:split], sys.argv[split + 1:]
+fetched, not_found = [], list(invalid)
 for key in keys:
     sc_file = os.path.join(status_dir, key)
     sc = open(sc_file).read().strip() if os.path.exists(sc_file) else "0"

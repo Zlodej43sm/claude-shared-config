@@ -29,11 +29,26 @@ export ARG
 
 python3 - <<'PY'
 import json, os, re, sys, time, urllib.error, urllib.request
+from urllib.parse import urlsplit
 
 TOKEN = os.environ["NOTION_TOKEN"]
 ARG = os.environ["ARG"]
 API = "https://api.notion.com/v1"
 MAX_BLOCKS, MAX_DEPTH = 500, 4
+
+
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib copies every header, Authorization included, to wherever a redirect
+    points. Keep it only for a same-origin hop (same scheme, host and port)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urlsplit(newurl)[:2] != urlsplit(req.full_url)[:2]:
+            new.headers.pop("Authorization", None)
+        return new
+
+
+OPENER = urllib.request.build_opener(_StripAuthOnRedirect)
 
 
 def fail(code, msg):
@@ -67,7 +82,7 @@ def request(path, method="GET", body=None, retries=2):
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with OPENER.open(req, timeout=20) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         if e.code == 429 and retries:

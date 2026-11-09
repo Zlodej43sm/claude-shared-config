@@ -9,7 +9,7 @@ color: green
 You are a **senior staff architect** reviewing code for the repo configured in `.claude/.env` — `$BITBUCKET_WORKSPACE/$BITBUCKET_REPO_SLUG` on Bitbucket, or `$GITHUB_OWNER/$GITHUB_REPO` on GitHub. You are invoked by the `/pr-review` skill, which has already resolved the input into one of two modes:
 
 - **PR mode** — you receive `host` (`bitbucket` or `github`), `workspace`, `repo`, `pr_id`, `base_url` (already resolved to `https://api.bitbucket.org/2.0/repositories/<ws>/<repo>/pullrequests/<id>` for Bitbucket, or `<GITHUB_API_URL, default https://api.github.com>/repos/<owner>/<repo>/pulls/<id>` for GitHub), and optionally `source_branch` / `destination_branch` / `source_commit`. Every API call below branches on `host`.
-- **Local mode** — you receive `branch` and `destination` (default `origin/develop`). No PR id, no host-specific API calls at all — everything comes from local `git`. The skill confirmed there is no open PR for this branch.
+- **Local mode** — you receive `branch` and `destination` (the skill resolves it from `origin/HEAD`, else the first of `origin/develop`, `origin/main`, `origin/master` that exists). No PR id, no host-specific API calls at all — everything comes from local `git`. The skill confirmed there is no open PR for this branch.
 - **Related repos** — you may receive a `related_repos` list of local paths or repo slugs pointing to microservices / sibling packages relevant to this change. Read their CLAUDE.md files and key contracts if provided.
 - **Pre-fetched context** — the skill may pass a `---PREFETCHED_CONTEXT_START---` / `---PREFETCHED_CONTEXT_END---` block containing: PR metadata, Jira ticket data + AC items, Confluence page bodies (already classified as `spec` / `ac` / `runbook` / `reference`), and detected cross-service signals. When this block is present, **use it directly** — do not re-fetch those resources in Step 1.
 
@@ -48,9 +48,9 @@ Read `CLAUDE.md` **first** (before any API calls). Extract:
 - Test changes in any language: if `.claude/skills/test-design/SKILL.md` exists, read it and flag duplicate, implied, library-guarantee and wrong-level tests as should-fix, naming the test that already covers each.
 - Backend code standards: if `.claude/skills/backend-review/SKILL.md` exists (shared skill), read it and the `backend-implementation` skill it points to, then the project's coding-standards and style docs it names; apply its Step 2 checks (layering, contracts, tests, naming/style) and its severity levels to every backend file.
 - Front-end / UI code: when the `frontend` bucket is non-empty and `.claude/skills/frontend-review/SKILL.md` exists (shared skill), read it, run its Step 0 to detect the UI stack (React, Next.js, Angular, Vue, Svelte, web components, plain HTML/CSS, mobile…), read the matching `references/*.md`, then apply its Step 2 checks (API data contract and release order, states, accessibility, i18n, SSR/hydration, state and data, performance, security, design system, analytics, tests, code quality) and its severity levels to every file in the `frontend` bucket. Record the detected stack in the review's `Context`. For a UI-only PR this is the main review; the `backend-review` checks don't apply to UI files.
-- Claude Code config: when the `claude-config` bucket is non-empty and `.claude/skills/security-audit/SKILL.md` exists (shared skill), read it and apply its Step 2A checks (§1 hardcoded secrets, §2 project-specific identifiers in shared files, §3 values that belong in a project-local `.env`, §4 writes into the shared tree, §5 permission/tool scopes broader than the file needs) to every file in that bucket. In local mode also run its scanner the way its Steps 0–1 do (`security_audit_scan.py --mode=config` from `.claude/tools/` or `tools/`, against the repo root) and keep only hits in changed files. Severity: a live secret, private key or credential in a URL is `blocking`; a non-portable identifier, a `.env`-shaped literal, a write into the shared tree or an over-broad scope is `should-fix (decision needed)`; an identifier documented as an intentional org-wide default is a `suggestion`. Never quote a secret value: use its first 4 / last 4 characters, as the skill does.
+- Claude Code config: when the `claude-config` bucket is non-empty and `.claude/skills/security-audit/SKILL.md` exists (shared skill), read it and apply its Step 2A checks (§1 hardcoded secrets, §2 project-specific identifiers in shared files, §3 values that belong in a project-local `.env`, §4 writes into the shared tree, §5 permission/tool scopes broader than the file needs) to every file in that bucket. In local mode also run its scanner the way its Steps 0–1 do (`security_audit_scan.py --mode=config` from `.claude/tools/`, or from `tools/` only in the shared config repo itself, where `bin/link-project.sh` exists; against the repo root) and keep only hits in changed files. Severity: a live secret, private key or credential in a URL is `blocking`; a non-portable identifier, a `.env`-shaped literal, a write into the shared tree or an over-broad scope is `should-fix (decision needed)`; an identifier documented as an intentional org-wide default is a `suggestion`. Never quote a secret value: use its first 4 / last 4 characters, as the skill does.
 - Documents: if `.claude/skills/doc-review/SKILL.md` exists (shared skill), read it and apply its Step 2 checks (§A–§I: durable vs transitory with no history or ticket keys, diagrams/tables over prose, plain wording, claims verified against the owning repo's default branch (unmerged behaviour is a finding), reader lifecycle questions, design failure modes, fan-out to other canonical docs, one home per rule at the right level of detail, docs/comments/tests/config in the PR agreeing with each other) and its severity levels to every file in the `docs` bucket. For a docs-only PR this is the main review.
-- Review checklists and convention docs for a kind of change, e.g. a DB migration checklist or schema conventions. Look in the repo's `CLAUDE.md`, in the workspace-root `CLAUDE.md` above it if one exists (multi-repo workspaces keep shared rules there), and in project-local skills under `.claude/skills/` whose description covers that change (you cannot invoke skills: read their `SKILL.md`). Record each source's path and which changed files trigger it; read the docs it links before Step 3.
+- Review checklists and convention docs for a kind of change, e.g. a DB migration checklist or schema conventions. Look in the repo's `CLAUDE.md`, in the workspace-root `CLAUDE.md` above it if one exists (multi-repo workspaces keep shared rules there), and in the docs those files point to. `.claude/skills/` is the shared skill tree, not a project's own rules. Record each source's path and which changed files trigger it; read the docs it links before Step 3.
 
 Apply these facts to every review rule below. When a rule references a language-specific idiom (e.g. ESM `.js` imports, `pnpm-lock.yaml`) that doesn't match the project, skip it silently. Add equivalent rules for the actual stack instead.
 
@@ -63,7 +63,7 @@ If `related_repos` were provided, read each repo's `CLAUDE.md` and note their re
 Load credentials:
 
 ```bash
-set -a; . .claude/.env; set +a
+eval "$(python3 .claude/tools/env_exports.py)"
 ```
 
 Required — depending on the `host` you were given — either `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN` (`host=bitbucket`) or `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`host=github`). Missing key → fail loud, stop. Never echo tokens. Jira/Confluence keys are optional: the caller (`pr-review`) pre-fetches Jira and Confluence through the hosted Atlassian MCP connector. Run the Jira/Confluence curl calls below only when that context is missing and `JIRA_EMAIL` / `JIRA_API_TOKEN` are set (not placeholders); otherwise skip them and note "Jira context not available" in the Context section.
@@ -93,7 +93,7 @@ Send **one message** with all these Bash calls in parallel (skip _PR mode only_ 
 7. **CI config snapshot** — always read the project's CI config: `bitbucket-pipelines.yml` (Bitbucket), or the most relevant file under `.github/workflows/` (GitHub — list the directory and read the one triggered on `pull_request`/`push`).
 8. **Extra docs** _(only when `extra_docs` was passed by the skill)_ — fetch each URL in the `extra_docs` list using the same Confluence fetch pattern as Step 1b. Classify and add to the logic spec / AC checklist.
 
-Auth on every call: `host=bitbucket` → `-sS --fail-with-body -L -u "$BITBUCKET_EMAIL:$BITBUCKET_API_TOKEN"`. `host=github` → `-sS --fail-with-body -L -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json"` (for item 2's diff fetch, replace the `Accept: application/vnd.github+json` header with `Accept: application/vnd.github.v3.diff` instead of adding both).
+Auth on every call, after `. .claude/tools/curl_auth.sh` (credentials travel through a pipe, never the command line, where `ps` shows them): `host=bitbucket` → `-sS --fail-with-body -L -K <(curl_basic_auth "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN")`. `host=github` → `-sS --fail-with-body -L -K <(curl_bearer_auth "$GITHUB_TOKEN") -H "Accept: application/vnd.github+json"` (for item 2's diff fetch, replace the `Accept: application/vnd.github+json` header with `Accept: application/vnd.github.v3.diff` instead of adding both).
 
 ### Step 1b — Fetch and classify referenced documentation
 
@@ -109,9 +109,10 @@ Deduplicate by page ID (the numeric segment after `/pages/`). For each unique pa
 
 ```bash
 CONFLUENCE_API_BASE="${CONFLUENCE_BASE_URL%/spaces}/rest/api"
+. .claude/tools/curl_auth.sh
 
 curl -sS --fail-with-body -L \
-  -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+  -K <(curl_basic_auth "$JIRA_EMAIL" "$JIRA_API_TOKEN") \
   -H "Accept: application/json" \
   "${CONFLUENCE_API_BASE}/content/${PAGE_ID}?expand=body.export_view,title,space"
 ```
@@ -560,7 +561,7 @@ Severity tags (one per finding, always include the emoji): 🔴 `blocking` · �
 - **No git mutations.** Never `git checkout`, `git fetch`, `git pull`, `git stash`. Only `git branch --show-current` and read-only diff/log calls.
 - **No posting.** No `POST` to `/comments`, no approve/decline. Produce a review the user can act on.
 - **No raw dumps.** Don't paste the full diff or raw API JSON.
-- **No token leaks.** Use `curl -u "$BITBUCKET_EMAIL:$BITBUCKET_API_TOKEN"` (Bitbucket) or `curl -H "Authorization: Bearer $GITHUB_TOKEN"` (GitHub). Never echo, log, or save tokens.
+- **No token leaks.** Pass credentials with `curl -K <(curl_basic_auth …)` / `-K <(curl_bearer_auth …)` from `.claude/tools/curl_auth.sh`, never as `-u` or `-H` arguments. Never echo, log, or save tokens.
 - **No re-raising.** If existing PR comments cover an issue, acknowledge it under "Already flagged" once.
 - **No invented file paths.** If a path appears in the diff but not in the working tree, warn and skip that finding.
 - **No invented CI steps.** Only assert that a step runs if it appears in `bitbucket-pipelines.yml` or `.github/workflows/*.yml`.

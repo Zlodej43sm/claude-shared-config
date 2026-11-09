@@ -10,6 +10,9 @@
 #   same way, only if one doesn't already exist — once generated, a project is
 #   free to diverge from the template (different permissions, extra hooks) and
 #   this script will never overwrite it silently.
+# - Appends to <project>/.gitignore whichever of .claude/.env,
+#   .claude/settings.local.json and .mcp.json git does not already ignore: they
+#   hold per-project values and the session's ANTHROPIC_API_KEY.
 # - Never touches .claude/.env, .claude/settings.local.json, or anything else
 #   project-specific.
 set -euo pipefail
@@ -64,6 +67,20 @@ if [ -e "$CLAUDE_DIR/settings.json" ]; then
 else
   cp "$SHARED_DIR/settings.json.template" "$CLAUDE_DIR/settings.json"
   echo "generated $CLAUDE_DIR/settings.json from settings.json.template"
+fi
+
+if git -C "$PROJECT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  missing=()
+  for path in .claude/.env .claude/settings.local.json .mcp.json; do
+    git -C "$PROJECT_DIR" check-ignore -q --no-index "$path" || missing+=("/$path")
+  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    if [ -s "$PROJECT_DIR/.gitignore" ] && [ -n "$(tail -c1 "$PROJECT_DIR/.gitignore")" ]; then
+      echo >>"$PROJECT_DIR/.gitignore"
+    fi
+    printf '%s\n' "# Claude Code per-project config (bin/link-project.sh)" "${missing[@]}" >>"$PROJECT_DIR/.gitignore"
+    echo "added to .gitignore: ${missing[*]}"
+  fi
 fi
 
 if [ ! -f "$CLAUDE_DIR/.env" ]; then

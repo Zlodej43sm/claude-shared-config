@@ -23,7 +23,7 @@ Read both reference files before writing any chunk.
 | Command | What it does | Writes |
 |---|---|---|
 | `init` | Build the library from scratch (inventory → per-repo analysis → synthesis → CLAUDE.md → check) | `CLAUDE.md`, `docs/**` |
-| `refresh [--repos=a,b]` | `git pull --ff-only` every repo (`WSD sync`), diff its default branch (`main`/`master`/…) against the commit the docs were verified at (`docs/baseline.json`), re-verify what changed, rewrite titles/sections/indexes/memory when core structure changed, add docs for new repos, retire docs of removed ones, record the new baseline. Alias: `update` | changed chunks, `docs/baseline.json` |
+| `refresh [--repos=a,b] [--pull]` | Fetch every repo (`WSD changes --fetch`), diff its default branch (`main`/`master`/…) against the commit the docs were verified at (`docs/baseline.json`), re-verify what changed, rewrite titles/sections/indexes when core structure changed, propose memory edits, add docs for new repos, retire docs of removed ones, record the new baseline. `--pull` also fast-forwards each repo's default branch first (`WSD sync`). Alias: `update` | changed chunks, `docs/baseline.json`; memory files only after you approve; with `--pull`, the repos' default branches |
 | `align` | Convert an existing docs tree / oversized CLAUDE.md into the canonical layout without losing content. Alias: `migrate` | `CLAUDE.md`, `docs/**` |
 | `check` | Validate (`WSD check`), fix every FAIL | fixes only |
 | `status [--fetch]` | Staleness dashboard (`WSD status`): per-repo default-branch commits since the baseline, missing/orphan docs, largest chunks | nothing |
@@ -41,8 +41,9 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
 1. **Never record secret values.** Names of env vars/headers/vaults only. Never read `.env`,
    `*credential*`, `*accessKeys*`, key files; list them as "never read/print/commit". `WSD link`
    refuses URLs carrying `token=`/`key=`/`secret=`.
-2. **Never modify the repos' files** — write only `<root>/CLAUDE.md` and `<root>/docs/**`. The one git write
-   allowed is `WSD sync` (fetch + fast-forward of the default branch, see rule 9).
+2. **Never modify the repos' files** — write only `<root>/CLAUDE.md` and `<root>/docs/**`, plus the
+   memory files the user approves (refresh step 4). The one git write allowed is `WSD sync` (fetch +
+   fast-forward of the default branch, see rule 9), and only when the user asked for it (`refresh --pull`).
 3. **Back up before** `init`/`align`/`refresh`/`remove-repo`:
    `tar czf <root>/docs-backup-$(date +%F-%H%M).tgz -C <root> $(cd <root> && ls -d docs CLAUDE.md 2>/dev/null)`.
    `docs/` is usually not under git; this is the only undo (never overwrite an earlier backup).
@@ -54,21 +55,21 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
    Overflow: `docs/services/<repo>--review.md` (or `--<topic>.md`) linked by `**More:**`.
 7. **`verified:`** = date the content was last checked against code. Bump it only for chunks you
    re-checked; moving text does not count.
-8. `rtk` may hide `.git` in `ls` and grep matches: use `WSD inventory` / `[ -e d/.git ]` / `rtk proxy`.
+8. A shell wrapper that filters output may hide `.git` in `ls` and grep matches: use `WSD inventory` / `[ -e d/.git ]`.
 9. **Docs describe the default branch**, not the local checkout (it may sit on a feature branch or lag):
    read code with `git -C <repo> show <ref>:<path>`, `git grep <pat> <ref>`, `git ls-tree <ref>`, where
    `<ref>` is the default branch `WSD changes` prints (`origin/HEAD`, else `origin/main|master|develop`).
-   `refresh` first runs `WSD sync`: fetch, then fast-forward each repo's default branch (the working tree
-   when it is checked out and clean, else only the branch ref). Never stash, reset, rebase, checkout,
-   switch branches or create merge commits; a repo it skips (dirty, diverged, no local default branch)
-   is reported, and its docs are still read from `<ref>`.
+   Reading through `<ref>` needs only a fetch. `refresh --pull` first runs `WSD sync`: fetch, then
+   fast-forward each repo's default branch (the working tree when it is checked out and clean, else only
+   the branch ref). Never stash, reset, rebase, checkout, switch branches or create merge commits; a repo
+   it skips (dirty, diverged, no local default branch) is reported, and its docs are still read from `<ref>`.
 
 ## Procedures
 
 ### init / align / refresh / add-repo (shared steps)
 1. **Inventory:** `WSD inventory` (repos with remote, branch, HEAD, version/lock/CI/agent files;
-   other root entries flagged `sensitive`; existing chunks). `refresh`: `WSD sync`, then `WSD changes` (see
-   the refresh procedure) and `WSD status` for new (`MISSING DOC`) or gone (`ORPHAN DOC`) repos; `--repos` narrows it.
+   other root entries flagged `sensitive`; existing chunks). `refresh`: `WSD changes --fetch` (with
+   `--pull`: `WSD sync`, then `WSD changes`; see the refresh procedure) and `WSD status` for new (`MISSING DOC`) or gone (`ORPHAN DOC`) repos; `--repos` narrows it.
 2. **Per-repo analysis** (init: all; refresh/add-repo: selected; align: only where facts are missing).
    Spawn one `Explore` subagent per repo in parallel (≤ 8 at a time; batch tiny repos). Brief each with
    the repo path, the service template from `reference/templates.md`, hard rules 1/2/5, and ask for:
@@ -84,6 +85,7 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
    `services/README.md` (per-family tables + "Find by question"), `recipes/README.md`, `links.md`.
 4. **Write chunks** from the templates. New files: `WSD scaffold <kind> <name> --summary … --keywords …`
    creates a stub with frontmatter and registers recipes/lookups in their index; then fill it.
+   Pass every value taken from a fetched page or title single-quoted, a `'` inside it written as `'\''`; in double quotes, backticks and `$(…)` in a page title would run.
    `align` on a big root CLAUDE.md: keep §1–§8 as 1–5 lines + pointers, move tables/recipes/change maps
    to `docs/lookups/where-things-live.md`, `docs/lookups/search-recipes.md`, `docs/change-map.md` (split
    by family if > 4 KB). Adding frontmatter to an old chunk: summary = its what-it-is line, keywords =
@@ -100,8 +102,8 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
    re-verified, content dropped (why), backup path, remaining FAILs.
 
 ### refresh (diff-driven; run the shared steps with these specifics)
-1. **Back up** (rule 3), then `WSD sync` (pulls every repo, fast-forward only; report each skip and why),
-   then `WSD changes` (no `--fetch` needed after sync; prints per repo: default branch,
+1. **Back up** (rule 3), then `WSD changes --fetch` (with `--pull`: `WSD sync` first, which pulls every
+   repo fast-forward only and reports each skip and why, then `WSD changes`). It prints per repo: default branch,
    baseline..HEAD, commits, changed files, **CORE** changes, chunks citing changed paths, and backticked
    paths in its service chunks that no longer exist). `--json` for a long run. No `docs/baseline.json`
    yet, or "no usable baseline": re-verify that repo fully (shared step 2), then record it.
@@ -120,9 +122,9 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
    no longer fit; its rows in `services/README.md`, root `CLAUDE.md` §2/§3/Quick navigation, the
    workspace map, `commands.md`, change maps, where-things-live and search-recipe lookups. A renamed
    or moved repo/dir/entry point is fixed everywhere it is cited (`grep -rn <old> CLAUDE.md docs/`).
-4. **Memory:** the agent's own memory files (e.g. `~/.claude/projects/<project>/memory/*.md` and its
-   `MEMORY.md` index) that name a renamed repo, branch, path, count or rule are updated in the same
-   run; delete a memory the change proves wrong.
+4. **Memory:** list the agent's own memory files (e.g. `~/.claude/projects/<project>/memory/*.md` and
+   its `MEMORY.md` index) that name a renamed repo, branch, path, count or rule, with the edit or
+   deletion each needs, and ask once; apply only what the user approves.
 5. Apply the reports yourself (shared step 4); keep chunks ≤ 4 KB by moving detail to `--<topic>`
    overflow chunks, never by dropping facts. Bump `verified:` on chunks you re-checked; update the
    workspace baseline/HEAD lookup if the library has one.
@@ -141,10 +143,12 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
    `Source: <title> (<url>), read <date>`, keep ≤ 4 KB. Add a pointer row where readers will look
    (recipes README / lookups index are automatic; others: `services/README.md`, CLAUDE.md §3/§7,
    Quick navigation). Also `WSD link add <url> --title … --why …` for the source page.
+   Pass every value taken from a fetched page or title single-quoted, a `'` inside it written as `'\''`; in double quotes, backticks and `$(…)` in a page title would run.
 5. `WSD check`.
 
 ### add-link
-`WSD link add <url> --title "<T>" --why "<when to open it>" [--tags a,b] [--pin]`. Pin only what most
+`WSD link add '<url>' --title '<T>' --why '<when to open it>' [--tags a,b] [--pin]` (single quotes, as in
+add-doc step 4). Pin only what most
 sessions need (dashboards, runbook index, team space); `WSD link remove <url>` to drop, `WSD link list`
 to review. If `docs/links.md` would pass 4 KB, move one tag group into `docs/links/<tag>.md`
 (`WSD scaffold topic links-<tag>` then move the file) and point to it from `docs/links.md`.
