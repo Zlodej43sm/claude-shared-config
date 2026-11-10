@@ -17,12 +17,12 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - A field the caller doesn't send yet: optional now, release order (service → caller → confirm no other caller omits it → required) in the PR, follow-up ticket linked?
 - No strict validation against another service's enum unless the pins stay aligned (checking one value → compare a string)?
 - Edge cases (empty input, not found, duplicates) behave like the sibling methods?
-- Response field and description named after the operation (`upserted<Entities>`, `Returns the upserted <entities>`)?
+- Response field and description named after the operation, in the project's form, else the SKILL.md §10 default (`upserted<Entities>`, `Returns the upserted <entities>`)?
 - Every new response field has a consumer linked in the PR? A nullable field says what `null` means?
 - A field newly read from a cached or not-yet-released upstream response: missing normalised once to `null` (or the cache key changed), no `!== null` on a value that can be `undefined`?
 - Public API fields named and typed like their sibling types, additive, end inclusion stated? A consumer of a period end uses the provider's boundary rule in its check and in the date it shows?
 - No prerelease pin of another component left at merge; recompiled against the released version?
-- User-facing sentences one translation key each (ICU `select`/`plural`), offer dates formatted in the offer's time zone?
+- User-facing sentences one translation key each (ICU `select`/`plural`), dates shown in the owning entity's time zone?
 
 ## 3. Data validity and consistency
 - Business value ranges encoded in the schema (positive amounts, non-empty names, max lengths)? A deleted model check moved into the schema?
@@ -50,7 +50,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - Collection names say exactly what they hold (the filter that produced them, no "valid" on a set that keeps invalid entries)? File names short, extending an existing module's family instead of chaining qualifiers?
 
 ## 6. Code organisation and readability
-- One job per function; pure helpers with their own tests in `helpers/`, trivial single-use logic inline?
+- One job per function; pure helpers with their own tests where the project keeps them, else the SKILL.md §10 default (`helpers/`); trivial single-use logic inline?
 - No comments for intent or restating code; only DB/library quirks?
 - Touched types and signatures brought up to the standards; untouched code left alone; dead code from the change removed?
 - Every extracted function or file reused, test-worthy or a named domain conversion (otherwise inlined)? Shared constants and error classes generic, not per route or per flow? No magic literals in conditions; lists and types derived from one `as const` dictionary?

@@ -23,7 +23,7 @@ Retrieve a Confluence page and present its full title and body as Markdown. Then
 ## Inputs
 
 - `args`: a Confluence page URL or a bare numeric page ID.
-    - URL form: `$CONFLUENCE_BASE_URL/<SPACE>/pages/<PAGE_ID>[/<title>]`
+    - URL form: `$CONFLUENCE_BASE_URL/spaces/<SPACE>/pages/<PAGE_ID>[/<title>]` (`CONFLUENCE_BASE_URL` defaults to `$JIRA_BASE_URL/wiki`; format: `env.example`)
     - ID form: `12345678`
 
 ## Expected Output
@@ -63,7 +63,7 @@ Omit the **Linked Pages** section entirely when no Confluence links are found in
 
 ### Step 2 — Fetch the root page (hosted MCP first, API token last)
 
-**Path A — hosted Atlassian MCP (browser sign-in, no API token), always first** — any connector that exposes `getConfluenceContent` (`mcp__atlassian-oauth__*`, `mcp__claude_ai_Atlassian_MCP__*`, `mcp__plugin_meta_atlassian__*`, or a claude.ai connector with an id-style prefix; load it with ToolSearch if deferred). Pass `cloudId` = the hostname of `$CONFLUENCE_BASE_URL` / `$JIRA_BASE_URL`, then `getConfluenceContent` with `{cloudId, content_url or content_id, detail: "full", content_format: "markdown"}`. If the server is listed but its tools are missing, the user hasn't signed in: tell them `/mcp` → `atlassian-oauth` → **Authenticate** (browser window), then retry — and continue with Path B meanwhile if an API token is configured.
+**Path A — hosted Atlassian MCP (browser sign-in, no API token), always first** — any connector that exposes `getConfluenceContent` (`mcp__atlassian-oauth__*`, `mcp__claude_ai_Atlassian_MCP__*`, a plugin-provided connector (`mcp__plugin_<name>_atlassian__*`), or a claude.ai connector with an id-style prefix; load it with ToolSearch if deferred). Pass `cloudId` = the hostname of `$CONFLUENCE_BASE_URL` / `$JIRA_BASE_URL`, then `getConfluenceContent` with `{cloudId, content_url or content_id, detail: "full", content_format: "markdown"}`. If the server is listed but its tools are missing, the user hasn't signed in: tell them `/mcp` → `atlassian-oauth` → **Authenticate** (browser window), then retry — and continue with Path B meanwhile if an API token is configured.
 
 **Path A2 — API-token MCP** (only when `JIRA_EMAIL` / `JIRA_API_TOKEN` are set). Call the `mcp__atlassian__confluence_get_page` tool:
 

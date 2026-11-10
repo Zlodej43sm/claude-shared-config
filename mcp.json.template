@@ -7,7 +7,7 @@
         "--env", "JIRA_URL={{JIRA_BASE_URL}}",
         "--env", "JIRA_USERNAME={{JIRA_EMAIL}}",
         "--env", "JIRA_API_TOKEN={{JIRA_API_TOKEN}}",
-        "--env", "CONFLUENCE_URL={{CONFLUENCE_BASE_URL}}",
+        "--env", "CONFLUENCE_URL={{CONFLUENCE_BASE_URL|{JIRA_BASE_URL}/wiki}}",
         "--env", "CONFLUENCE_USERNAME={{JIRA_EMAIL}}",
         "--env", "CONFLUENCE_API_TOKEN={{JIRA_API_TOKEN}}",
         "--env", "ENABLED_TOOLS=jira_get_issue,jira_search,confluence_get_page,confluence_search",

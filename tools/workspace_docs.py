@@ -9,8 +9,9 @@ The skill does the judgment (reading code, writing facts); this script does
 the deterministic parts: inventory, validation, staleness, retrieval,
 scaffolding new chunks and maintaining the links registry.
 
-USAGE (root = --root, else $CLAUDE_PROJECT_DIR, else cwd). Without --root, the writing commands (scaffold,
-link add/remove, baseline --set) refuse a root that is itself a git repo or is the shared Claude config repo.
+USAGE (root = --root, else $CLAUDE_PROJECT_DIR, else cwd). The writing commands (scaffold, link add/remove,
+baseline --set) always refuse a root inside the shared Claude config repo (this script's repo, also reached
+through a project's .claude/ symlinks) and, without --root, a root inside any git work tree.
   workspace_docs.py inventory                 JSON: repos (remote, branch, HEAD, version/lock/CI/agent files),
                                               non-repo entries, existing chunks (size, verified)
   workspace_docs.py check [--json]            validate the library; exit 1 on any FAIL
@@ -62,12 +63,22 @@ def root_dir(arg):
     return Path(arg or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
 
 
-def unsafe_root(root):
-    """Why an implicit root must not be written to, or None. A workspace root holds repos; it is not one."""
-    if (root / ".git").exists():
-        return "it is itself a git repo"
-    if (root / "bin/link-project.sh").is_file() and (root / "skills").is_dir():
-        return "it is the shared Claude config repo"
+SHARED_REPO = Path(__file__).resolve().parents[1]
+
+
+def unsafe_root(root, explicit):
+    """Why `root` must not be written to, or None. A workspace root holds repos; it is not inside one.
+    The shared config repo is refused even with an explicit --root."""
+    if root.resolve().is_relative_to(SHARED_REPO):
+        return f"it is inside the shared Claude config repo ({SHARED_REPO})"
+    if not explicit:
+        try:
+            top = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                                 capture_output=True, text=True, timeout=15)
+        except Exception:
+            top = None
+        if top is not None and top.returncode == 0:
+            return f"it is inside the git repo {top.stdout.strip()}"
     return None
 
 
@@ -551,7 +562,7 @@ def append_table_row(index, row):
     index.write_text("\n".join(lines) + "\n")
 
 
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*(--[A-Za-z0-9][A-Za-z0-9_.-]*)?$")
+NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*(--[A-Za-z0-9_][A-Za-z0-9_.-]*)?$")
 
 
 def cmd_scaffold(root, a):
@@ -680,8 +691,8 @@ def main():
     l.add_argument("--title"); l.add_argument("--why"); l.add_argument("--tags"); l.add_argument("--pin", action="store_true")
     a = p.parse_args()
     root = root_dir(a.root)
-    why = None if a.root else unsafe_root(root)
-    if why and writes(a):
+    why = writes(a) and unsafe_root(root, bool(a.root))
+    if why:
         print(f"refusing to write to {root}: {why}. Run from the workspace root (the folder holding the repos) "
               "or pass --root <workspace-root> explicitly.", file=sys.stderr)
         return 2

@@ -40,7 +40,7 @@ Then read `CLAUDE.md` for project layout, conventions, and any invariants the re
 
 Send **one message** with these calls in parallel:
 
-1. **PR metadata** — `.claude/tools/bb_pr_fetch.sh {pr_id}` (`host=bitbucket`) or `.claude/tools/gh_pr_fetch.sh {pr_id}` (`host=github`). Its `dest_branch` and `author` feed items 3–4 and the filter below.
+1. **PR metadata** — `.claude/tools/bb_pr_fetch.sh {pr_id} > "<cache_dir>/pr.json"` (`host=bitbucket`) or `.claude/tools/gh_pr_fetch.sh {pr_id} > "<cache_dir>/pr.json"` (`host=github`). Its `dest_branch` feeds items 3–4 and Step 2; its `author` feeds the filter below, which reads it from that file.
 
 2. **All comments, every page** — save to disk to keep large payloads out of context. A PR with more than one page of comments is common; reading only the first page silently drops the rest.
 
@@ -96,20 +96,21 @@ Send **one message** with these calls in parallel:
     print("fetched")
     ```
 
-3. **Changed files** — `git diff --name-only origin/{dest_branch}..HEAD` (`dest_branch` is the PR's destination branch from the metadata above)
+3. **Changed files** — `git diff --name-only 'origin/{dest_branch}'..HEAD` (`dest_branch` is the PR's destination branch from the metadata above). The PR author names the branch: keep it inside the single quotes, writing each `'` in it as `'\''`, here and wherever else it reaches the shell.
 
-4. **Recent commits** — `git log --oneline origin/{dest_branch}..HEAD`
+4. **Recent commits** — `git log --oneline 'origin/{dest_branch}'..HEAD`
 
-Then run this Python snippet to extract unanswered comments:
+Then run this Python snippet to extract unanswered comments. Pass the reviewer filter as its only argument (`python3 - '<reviewer_filter>' <<'PY'`, same single-quote rule as item 3; `''` when empty), never pasted into the code:
 
 ```python
-import json, os
+import json, os, sys
 
 cache           = "{cache_dir}"
 pr_id           = "{pr_id}"
 host            = "{host}"                    # "bitbucket" | "github"
-reviewer_filter = "{reviewer_filter}"          # empty = all human reviewers
-pr_author       = "{pr_author_display_name}"   # from PR metadata (GitHub: the "login")
+reviewer_filter = sys.argv[1] if len(sys.argv) > 1 else ""   # empty = all human reviewers
+with open(f"{cache}/pr.json") as f:
+    pr_author = json.load(f)["author"]        # Bitbucket display_name, GitHub login
 
 # Authors whose lowercased name contains any keyword are skipped as bots. Override with the
 # comma-separated REVIEW_BOT_KEYWORDS from .claude/.env (e.g. a scanner's account name).
@@ -233,7 +234,7 @@ Run in parallel:
 
 1. **Review docs** — glob `.claude/reviews/pr-{pr_id}*.md`. Read every match in full. These capture prior decisions, deferred items, and intentional choices — treat them as authoritative context for reply composition.
 
-2. **Diff stat** — `git diff --stat origin/{dest_branch}..HEAD`
+2. **Diff stat** — `git diff --stat 'origin/{dest_branch}'..HEAD`
 
 3. **Latest commit** — `git show --stat HEAD` — shows what changed most recently, useful for confirming recent fixes.
 
@@ -297,7 +298,7 @@ python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "<cache_dir>/cr_repli
 
 ## Step 5 — Post or dry-run
 
-In `mode: post`, skip Steps 1–4: `replies_file` is a JSON list of `{id, kind, reply, text}` — the file Step 4 wrote, or one the skill composed after it fixed the code. First re-fetch the comments (Step 1, item 2) and drop any `id` that now has a reply from the PR author, so a retry never double-posts; then post the rest exactly as below.
+In `mode: post`, skip Steps 1–4: `replies_file` is a JSON list of `{id, kind, reply, text}` — the file Step 4 wrote, or one the skill composed after it fixed the code. First re-fetch the PR metadata and comments (Step 1, items 1–2) and drop any `id` that now has a reply from the PR metadata's `author`, so a retry never double-posts; then post the rest exactly as below.
 
 ### If `dry_run: true`
 

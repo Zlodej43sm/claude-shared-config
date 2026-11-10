@@ -9,21 +9,30 @@ Skills and agents run:
 Sourcing the file instead (`. .claude/.env`) runs it as shell: an unquoted value
 with a space, such as `op://Dev Tooling/item/field`, makes bash execute the text
 after the space as a command, relative to the project root. This tool parses the
-file with hooks/sync-env.py's parser and prints one `export KEY='value'` line per
-key, every value quoted with shlex.quote.
+file with hooks/sync-env.py's parser and prints one export line per key.
 
-Value per key:
-  - a literal value in .env wins (an edit to .env applies without a restart);
-  - an `op://` reference uses the session's value when hooks/sync-env.py already
-    resolved it, else resolves it now with `op read`;
-  - an empty or placeholder value keeps a usable session value (e.g. GITHUB_OWNER
-    taken from the origin remote, GITHUB_TOKEN from `gh auth login`).
-A reference that cannot be resolved is not exported, so the key is reported as
-missing rather than holding an op:// string.
+Non-secret keys: `export KEY='value'`, quoted with shlex.quote. A literal value
+in .env wins (an edit to .env applies without a restart); an empty or placeholder
+value keeps a usable session value (e.g. GITHUB_OWNER taken from the origin remote).
+
+Secret keys (an op:// reference in .env, a name matching SECRET_NAME in
+hooks/sync-env.py, or ANTHROPIC_API_KEY): the value is never printed, so running
+the tool without `eval` leaks nothing into a transcript.
+  - the session already holds a usable value and .env has an op:// reference, an
+    empty/placeholder value, or the same value -> no line (it is already set; e.g.
+    GITHUB_TOKEN from `gh auth login`);
+  - otherwise -> `export KEY="$(... env_exports.py --value KEY)"`, which reads
+    the value only when the shell evaluates the line. An op:// reference is
+    resolved with `op read` then; one that cannot be resolved leaves the key empty,
+    so it is reported as missing rather than holding an op:// string.
+
+--value KEY  print KEY's value from .env: the literal, or its op:// reference
+             resolved with `op read`. Prints nothing when KEY is absent or the
+             reference cannot be resolved, so KEY ends up empty (= missing).
 
 Project dir: $CLAUDE_PROJECT_DIR, else the cwd.
 
-STDOUT  export lines (nothing when .claude/.env is absent)
+STDOUT  export lines (nothing when .claude/.env is absent); with --value, the value
 EXIT    0
 """
 from __future__ import annotations
@@ -47,33 +56,48 @@ def load_sync_env():
     return module
 
 
-def main() -> int:
-    env_file = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()) / ".claude" / ".env"
+def print_value(sync_env, file_env: dict[str, str], key: str) -> int:
+    value = file_env.get(key, "")
+    if value.startswith("op://"):
+        value = sync_env.resolve_op_refs({key: value})[key]
+        if value.startswith("op://"):
+            return 0
+    if value:
+        sys.stdout.write(value + "\n")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    project_dir = os.path.abspath(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    env_file = Path(project_dir) / ".claude" / ".env"
+    if argv and (argv[0] != "--value" or len(argv) != 2):
+        sys.stderr.write("usage: env_exports.py [--value KEY]\n")
+        return 2
     if not env_file.is_file():
         return 0
     sync_env = load_sync_env()
     file_env = {k: v for k, v in sync_env.parse_env_file(env_file).items() if KEY_RE.fullmatch(k)}
+    if argv:
+        return print_value(sync_env, file_env, argv[1])
 
-    values: dict[str, str] = {}
-    to_resolve: dict[str, str] = {}
+    value_cmd = (f"CLAUDE_PROJECT_DIR={shlex.quote(project_dir)} python3 -I "
+                 f"{shlex.quote(str(Path(__file__).resolve()))} --value")
+    lines: list[str] = []
     for key, value in file_env.items():
         session = os.environ.get(key, "")
-        if value.startswith("op://"):
-            if sync_env.usable_secret(session):
-                values[key] = session
-            else:
-                to_resolve[key] = value
+        if value.startswith("op://") or sync_env.SECRET_NAME.search(key) or key == sync_env.ANTHROPIC_KEY:
+            if sync_env.usable_secret(session) and (
+                    value.startswith("op://") or not sync_env.usable_secret(value) or value == session):
+                continue
+            lines.append(f'export {key}="$({value_cmd} {key})"\n')
         elif sync_env.usable_secret(value) or not sync_env.usable_secret(session):
-            values[key] = value
+            lines.append(f"export {key}={shlex.quote(value)}\n")
         else:
-            values[key] = session
-    for key, value in sync_env.resolve_op_refs(to_resolve).items():
-        if not value.startswith("op://"):
-            values[key] = value
+            lines.append(f"export {key}={shlex.quote(session)}\n")
 
-    sys.stdout.write("".join(f"export {k}={shlex.quote(v)}\n" for k, v in values.items()))
+    sys.stdout.write("".join(lines))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

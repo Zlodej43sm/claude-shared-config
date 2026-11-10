@@ -17,7 +17,12 @@ Usage, as written in mcp.json.template:
                    Missing, empty, a template placeholder, or an unresolved
                    op:// reference -> message on stderr, exit 1 (the server
                    shows as failed in /mcp instead of running half-configured).
-  {{KEY|default}}  optional: falls back to `default` (may be empty).
+  {{KEY|default}}  optional: falls back to `default` (may be empty). The default
+                   may reference other keys as {OTHER}, e.g.
+                   {{CONFLUENCE_BASE_URL|{JIRA_BASE_URL}/wiki}}; referenced keys
+                   are looked up like KEY (incl. op:// and --fallback). If one has
+                   no usable value the whole default expands to "" (the variable
+                   is then left unset, like an empty optional).
 
 --fallback KEY=<command line>: when KEY has no usable value (not in the process env or
 .env, or a template placeholder / unresolved op:// reference), run the command and use its trimmed stdout (e.g. GITHUB_TOKEN="gh auth token" reuses
@@ -29,9 +34,10 @@ variables whose expanded value is empty are not exported at all, so
 `docker run -e VAR` forwards nothing rather than an empty string.
 
 The server gets only the credentials it asks for: the inherited environment is
-passed on without every key defined in .claude/.env and without any variable with
-a secret-looking name (*TOKEN*, *SECRET*, *PASSWORD*, *_KEY, ...: SECRET_NAME in
-hooks/sync-env.py), then the --env pairs are added. A server started with `npx`/`uvx` runs
+passed on without every key defined in .claude/.env, without any variable with
+a secret-looking name (*TOKEN*, *SECRET*, *PASSWORD*, *_KEY, OP_SESSION_*, *_PAT,
+*_PWD, ...: SECRET_NAME in hooks/sync-env.py) and without any variable whose value
+holds URL credentials (`scheme://user:password@...`), then the --env pairs are added. A server started with `npx`/`uvx` runs
 on the host and resolves its dependencies at start; mcp.json.template pins that resolution to
 a date (`--exclude-newer` / `--before`).
 
@@ -48,7 +54,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-PLACEHOLDER = re.compile(r"\{\{([A-Za-z0-9_]+)(?:\|([^}]*))?\}\}")
+# {{KEY}} or {{KEY|default}}; the default may contain {OTHER} key references.
+PLACEHOLDER = re.compile(r"\{\{([A-Za-z0-9_]+)(?:\|((?:[^{}]|\{[A-Za-z0-9_]+\})*))?\}\}")
+KEY_REF = re.compile(r"\{([A-Za-z0-9_]+)\}")
+# A value carrying URL userinfo with a password, e.g. https://user:pass@host (a proxy URL).
+URL_CREDENTIALS = re.compile(r"://[^/?#@\s:]*:[^/?#@\s]*@")
 
 
 def load_sync_env():
@@ -100,7 +110,10 @@ def main(argv: list[str]) -> int:
     file_env = sync_env.parse_env_file(env_file) if env_file.is_file() else {}
 
     templates = [raw for _, raw in pairs] + command
-    keys = {m.group(1) for t in templates for m in PLACEHOLDER.finditer(t)}
+    keys: set[str] = set()
+    for m in (m for t in templates for m in PLACEHOLDER.finditer(t)):
+        keys.add(m.group(1))
+        keys.update(KEY_REF.findall(m.group(2) or ""))
 
     # Real process env wins over the file; only op:// refs for keys we use get resolved.
     values = {k: os.environ[k] for k in keys if os.environ.get(k)}
@@ -130,13 +143,17 @@ def main(argv: list[str]) -> int:
             if val:
                 return val
             if default is not None:
-                return default
+                refs = KEY_REF.findall(default)
+                if not all(sync_env.usable_secret(values.get(r, "")) for r in refs):
+                    return ""
+                return KEY_REF.sub(lambda r: values[r.group(1)], default)
             problems.append(f"{key} is not set in {env_file}")
             return ""
         return PLACEHOLDER.sub(sub, text)
 
     child_env = {k: v for k, v in os.environ.items()
-                 if k not in file_env and not sync_env.SECRET_NAME.search(k)}
+                 if k not in file_env and not sync_env.SECRET_NAME.search(k)
+                 and not URL_CREDENTIALS.search(v)}
     for name, raw in pairs:
         expanded = expand(raw)
         if expanded:

@@ -33,7 +33,7 @@ Parse the ticket key from the branch name using the pattern `[A-Z]+-[0-9]+` (mat
 - `feat/$JIRA_WORKSPACE-13-avro-schema` → `$JIRA_WORKSPACE-13`
 - `feat/OPS-123-sdk-publish` → `OPS-123`
 
-If the user supplied a key in `args`, use that instead. If neither source yields a key, ask the user.
+If the user supplied a key in `args`, use that instead. If neither source yields a key, ask the user. The key must match `^[A-Z][A-Z0-9_]+-[0-9]+$` (otherwise ask); later steps use it as that literal `<TICKET_KEY>`.
 
 Determine the output path:
 
@@ -57,14 +57,14 @@ When no MCP path works and the token is set: fall back to curl.
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
 . .claude/tools/curl_auth.sh   # credentials go through a pipe, never the command line
-WORK_DIR=$(mktemp -d)
+WORK_DIR=$(mktemp -d) && echo "$WORK_DIR"
 curl -s -K <(curl_basic_auth "$JIRA_EMAIL" "$JIRA_API_TOKEN") \
   -H "Accept: application/json" \
-  "$JIRA_BASE_URL/rest/api/3/issue/$TICKET_KEY?fields=summary,status,description,comment" \
+  "$JIRA_BASE_URL/rest/api/3/issue/<TICKET_KEY>?fields=summary,status,description,comment" \
   -o "$WORK_DIR/jira-issue.json"
 ```
 
-Read `$WORK_DIR/jira-issue.json`, then `rm -rf "$WORK_DIR"`. Never echo or log the token.
+Shell variables don't survive between commands: read `<path printed above>/jira-issue.json`, then `rm -rf "<path printed above>"`. Never echo or log the token.
 
 ## Step 3 — Collect the diff and changed files
 
@@ -76,19 +76,20 @@ for b in develop main master; do
   [ -n "$BASE" ] && break
   git rev-parse --verify --quiet "refs/remotes/origin/$b" >/dev/null && BASE="origin/$b"
 done
+echo "$BASE"
 ```
 
-Then run these in parallel:
+Then run these in parallel, with the base printed above as a single-quoted literal (each `'` in it written as `'\''`):
 
 ```bash
 # All commits on the branch not yet on the base branch
-git log "$BASE"..HEAD --oneline
+git log '<base printed above>'..HEAD --oneline
 
 # Full diff — file paths only first, for sizing
-git diff "$BASE"...HEAD --name-only
+git diff '<base printed above>'...HEAD --name-only
 
 # Stat summary (lines added/removed per file)
-git diff "$BASE"...HEAD --stat
+git diff '<base printed above>'...HEAD --stat
 ```
 
 Then read the **full diff** and the **full content** of changed source files (not test files, not lock files, not generated dist). Cap at ~15 files; if more changed, prioritise by: schemas → core logic → config → tests.

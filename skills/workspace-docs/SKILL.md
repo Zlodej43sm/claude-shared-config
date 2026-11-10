@@ -14,9 +14,9 @@ chunk instead of whole repos or stale READMEs.
 - File templates (service, lookup, connection, recipe, root CLAUDE.md): `reference/templates.md`.
 - Mechanical helper (stdlib Python): `.claude/tools/workspace_docs.py` — `inventory`, `check`,
   `status`, `sync`, `changes`, `baseline`, `find`, `audit`, `scaffold`, `link`. Run it as `python3 -I .claude/tools/workspace_docs.py <cmd>`
-  from the workspace root (or pass `--root`). Without `--root`, its writing commands (`scaffold`,
-  `link add`/`remove`, `baseline --set`) refuse a root that is itself a git repo or this shared config
-  repo. Below it is abbreviated `WSD`.
+  from the workspace root (or pass `--root`). Its writing commands (`scaffold`, `link add`/`remove`,
+  `baseline --set`) always refuse a root inside this shared config repo and, without `--root`, a root
+  inside any git work tree. Below it is abbreviated `WSD`.
 
 Read both reference files before writing any chunk.
 
@@ -87,8 +87,8 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
    `services/README.md` (per-family tables + "Find by question"), `recipes/README.md`, `links.md`.
 4. **Write chunks** from the templates. New files: `WSD scaffold <kind> <name> --summary … --keywords …`
    creates a stub with frontmatter and registers recipes/lookups in their index; then fill it.
-   `<name>` is a slug: letters, digits, `_`, `.`, `-` (lowercase, except a repo folder name), optional
-   `--<part>` suffix, no `/` or `..`; the tool refuses anything else.
+   `<name>` is a slug: letters, digits, `_`, `.`, `-` (lowercase, except a repo folder name), not
+   starting with `.`, optional `--<part>` suffix, no `/` or `..`; the tool refuses anything else.
    Pass every value taken from a fetched page or title single-quoted, a `'` inside it written as `'\''`; in double quotes, backticks and `$(…)` in a page title would run.
    `align` on a big root CLAUDE.md: keep §1–§8 as 1–5 lines + pointers, move tables/recipes/change maps
    to `docs/lookups/where-things-live.md`, `docs/lookups/search-recipes.md`, `docs/change-map.md` (split

@@ -55,12 +55,17 @@ case "$mode" in
     ;;
   *)
     file="$mode"
+    # Absolute before the cd below, so the -f test and prettier see the same file.
+    case "$file" in
+      /*) ;;
+      *) file="$PWD/$file" ;;
+    esac
     if [ ! -f "$file" ]; then
       # File may have been deleted or renamed by the same tool call.
       exit 0
     fi
     cd "$PROJECT_DIR" || exit 1
-    if ! out="$("$PRETTIER" --write --ignore-unknown "$file" 2>&1)"; then
+    if ! out="$("$PRETTIER" --write --ignore-unknown -- "$file" 2>&1)"; then
       echo "prettier-check: failed to format $file" >&2
       echo "$out" >&2
       exit 2

@@ -1,4 +1,4 @@
-    #!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 SessionStart hook: make .claude/.env available to every Bash/agent/skill call.
 
@@ -30,6 +30,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 BITBUCKET_KEYS = (
@@ -51,9 +52,12 @@ JIRA_CREDENTIAL_KEYS = ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")  # opti
 ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
 # Secret-looking env var names: kept out of settings.local.json here and out of MCP child envs
 # by tools/mcp-run.py. Anchored parts avoid non-secrets such as SSH_AUTH_SOCK or TERM_SESSION_ID.
+# OP_SESSION_* are 1Password CLI session tokens; *_PAT personal access tokens; *_PWD passwords
+# (e.g. MYSQL_PWD).
 SECRET_NAME = re.compile(
     r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL|WEBHOOK|COOKIE"
-    r"|(^|_)KEY$|(^|_)PASS(PHRASE)?($|_)|(^|_)(AUTH|SESSION)$|(^|_)DSN($|_)",
+    r"|(^|_)KEY$|(^|_)PASS(PHRASE)?($|_)|(^|_)(AUTH|SESSION)$|(^|_)DSN($|_)"
+    r"|^OP_SESSION_|_PAT$|_PWD$",
     re.I,
 )
 # Registered as `apiKeyHelper` next to the env var: Claude Code asks once whether to use an
@@ -277,7 +281,11 @@ def export_to_session(env: dict[str, str]) -> None:
     try:
         # 0600 from creation (and before writing to an existing file): never readable by others
         fd = os.open(target, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        os.fchmod(fd, 0o600)
+        if hasattr(os, "fchmod"):  # not on Windows
+            try:
+                os.fchmod(fd, 0o600)
+            except OSError as exc:
+                warn(f"could not make CLAUDE_ENV_FILE owner-only ({exc}); writing it anyway")
         with os.fdopen(fd, "a", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
     except OSError as exc:
@@ -286,11 +294,14 @@ def export_to_session(env: dict[str, str]) -> None:
 
 def write_private(path: Path, text: str) -> None:
     """Replace `path` atomically with a file that is 0600 from creation."""
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_EXCL, 0o600)
+    # mkstemp: a fresh random name (a stale temp file from a crashed run cannot block
+    # the write), created O_EXCL with mode 0600
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(tmp_name)
     try:
-        os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            if hasattr(os, "fchmod"):  # not on Windows
+                os.fchmod(fh.fileno(), 0o600)
             fh.write(text)
         os.replace(tmp, path)
     except BaseException:

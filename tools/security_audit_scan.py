@@ -64,10 +64,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Skipped at any depth.
+# Directories skipped at any depth (directory names only, never a file's own name).
 SKIP_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".idea",
 }
+# Config mode keeps build/ and dist/: config folders are small and named by humans, so a
+# skills/build/ or tools/dist/ folder is real content, not build output.
+CONFIG_SKIP_DIRS = SKIP_DIRS - {"build", "dist"}
 # Claude Code runtime output: skipped only directly under .claude/, so a skills/x/reviews/
 # folder in the config tree is still scanned.
 CLAUDE_RUNTIME_DIRS = {"plans", "reviews", "worktrees", ".cache"}
@@ -148,7 +151,10 @@ PRIVATE_KEY_BLOCK = re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIV
 WRITE_CALL_PATTERNS = re.compile(
     r"\.write_text\(|\bopen\([^)]*[\"'](?:[wax][bt+]*|r[bt]?\+[bt]?)[\"']|fs\.writeFile|fs\.writeFileSync|json\.dump\(|"
     r"\bos\.(?:fdopen|open|makedirs)\(|\.mkdir\(|\.extractall\(|\bln\s+-s|"
-    r"\bmkdir\s+|\bcp\s+[\"'/$.~-]|git\s+add\b|git\s+commit\b|(?:(?<=\s)|^)>{1,2}\s*[\"'$~./]"
+    r"\bmkdir\s+|\bcp\s+[\"'/$.~-]|git\s+add\b|git\s+commit\b|(?:(?<=\s)|^)>{1,2}\s*[\"'$~./]|"
+    r"\btempfile\.(?:mkstemp|NamedTemporaryFile)\(|\bos\.(?:replace|rename)\(|\bshutil\.(?:copy\w*|move)\(|"
+    r"\.write_bytes\(|\btee\s+(?:-a\s+)?[\"'/$.~\w-]|\bmv\s+(?:-[A-Za-z]+\s+)*[\"'$~./\w-]*[\"'/$.]|"
+    r"\btouch\s+[\"'$~./\w-]*[\"'/$.]|\bsed\s+(?:-[A-Za-z]+\s+)*(?:-[A-Za-z]*i|--in-place)\b"
 )
 
 URL_RE = re.compile(r"https?://[^\s\"'<>()\]]+")
@@ -157,7 +163,8 @@ LOCAL_PATH_RE = re.compile(r"(?:/Users/[^\s\"'<>()\]]+|/home/[^\s\"'<>()\]]+|C:\
 
 
 def skipped_dir(parts: tuple[str, ...]) -> bool:
-    if any(part in SKIP_DIRS for part in parts):
+    """`parts`: a file's path relative to the root; its last part is the file name."""
+    if any(part in CONFIG_SKIP_DIRS for part in parts[:-1]):
         return True
     return len(parts) > 2 and parts[0] == ".claude" and parts[1] in CLAUDE_RUNTIME_DIRS
 
@@ -439,7 +446,7 @@ def iter_code_files(root: Path):
         rels = [p.relative_to(root) for p in root.rglob("*") if p.is_file()]
     own = Path(__file__).resolve()
     for rel in sorted(set(rels)):
-        if any(part in CODE_SKIP_DIRS for part in rel.parts):
+        if any(part in CODE_SKIP_DIRS for part in rel.parts[:-1]):
             continue
         if (root / rel).resolve() == own:  # its pattern table matches every rule
             continue

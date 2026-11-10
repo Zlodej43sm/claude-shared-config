@@ -63,16 +63,19 @@ Parse the `--` separator greedily: everything before `--` is the pr-identifier; 
 eval "$(python3 .claude/tools/env_exports.py)"
 HOST=$(.claude/tools/detect_git_host.sh) || HOST=""
 CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pr-review.XXXXXXXX")
+echo "HOST=$HOST CACHE_DIR=$CACHE_DIR"
 ```
 
-`$HOST` is `bitbucket` or `github` — carry it through every later step; it decides which tool script and which credential set applies. If `detect_git_host.sh` exited non-zero (empty `$HOST`), tell the user to set `GIT_HOST=bitbucket` or `GIT_HOST=github` in `.claude/.env` and stop.
+Shell variables don't survive between commands. Carry every value this skill resolves (host, cache path, PR id, branch, source commit) as a literal: each later block re-sets what it uses from the value printed or resolved earlier, as in `HOST="<host printed above>"`.
 
-`$CACHE_DIR` is a fresh, unique directory for this invocation's Jira/Confluence prefetch data — carry it through every later step exactly like `$HOST`. Every command that calls `extract_pr_links.py`, `jira_fetch_batch.sh`, `conf_fetch_batch.sh`, `extract_secondary_links.py`, or `build_prefetch_context.py` must `export PR_REVIEW_CACHE_DIR="$CACHE_DIR"` first (in addition to loading `.claude/.env` with `env_exports.py`) — these tools reject a missing `PR_REVIEW_CACHE_DIR` rather than falling back to a shared location. This keeps concurrent or sequential `/pr-review` runs — different PRs, different projects sharing this same tool set, or two sessions running at once — from reading each other's cached tickets and pages out of a shared temp directory.
+The host is `bitbucket` or `github`; it decides which tool script and which credential set applies. If `detect_git_host.sh` exited non-zero (empty host), tell the user to set `GIT_HOST=bitbucket` or `GIT_HOST=github` in `.claude/.env` and stop.
+
+The cache path is a fresh, unique directory for this invocation's Jira/Confluence prefetch data. Every command that calls `extract_pr_links.py`, `jira_fetch_batch.sh`, `conf_fetch_batch.sh`, `extract_secondary_links.py`, or `build_prefetch_context.py` must `export PR_REVIEW_CACHE_DIR="<path printed above>"` first (in addition to loading `.claude/.env` with `env_exports.py`) — these tools reject a missing `PR_REVIEW_CACHE_DIR` rather than falling back to a shared location. This keeps concurrent or sequential `/pr-review` runs — different PRs, different projects sharing this same tool set, or two sessions running at once — from reading each other's cached tickets and pages out of a shared temp directory.
 
 Required keys:
 - **Jira**: none. Tickets and pages are read through the hosted Atlassian MCP connector first; `JIRA_EMAIL` / `JIRA_API_TOKEN` are only the fallback (order: `agents/jira-context.md` → "Access paths"). Never stop because they are missing or placeholders. `JIRA_BASE_URL` names the site (else ask the connector's `getAccessibleAtlassianResources`).
-- **When `$HOST=bitbucket`**: `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`.
-- **When `$HOST=github`**: `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`GITHUB_API_URL` is optional — only needed for GitHub Enterprise Server).
+- **When the host is `bitbucket`**: `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`.
+- **When the host is `github`**: `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`GITHUB_API_URL` is optional — only needed for GitHub Enterprise Server).
 
 Optional keys: `CONFLUENCE_BASE_URL`. If absent, falls back to the host of `$JIRA_BASE_URL` for Confluence URL matching.
 
@@ -84,16 +87,19 @@ If any **required** key is missing or has a placeholder value (`replace-with-...
 
 Parse the pr-identifier portion of `args`:
 
-- `^#?[0-9]+$` → `PR_ID = digits only`. Skip to Step 1.5, using `$HOST` from Step 0.
+- `^#?[0-9]+$` → `PR_ID = digits only`. Skip to Step 1.5, using the host from Step 0.
 - `bitbucket.org/<ws>/<repo>/pull-requests/<id>(/.*)?` → extract workspace, repo, id; override `.env` values and set `HOST=bitbucket` (an explicit URL always wins over Step 0's detected host). Skip to Step 1.5.
 - `github.com/<owner>/<repo>/pull/<id>(/.*)?` → extract owner, repo, id; override `.env` values and set `HOST=github`. Skip to Step 1.5.
-- Empty → `BRANCH = $(git branch --show-current)`. Do branch lookup (below).
+- Empty → the current branch. Do branch lookup (below).
 - Anything else → treat as source branch name. Do branch lookup (below).
 
-**Branch lookup:**
+**Branch lookup** (single-quote a branch name from `args`, writing each `'` in it as `'\''`, so `$`, backticks or `(…)` in it stay text):
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
+HOST="<host printed above>"
+BRANCH='<branch from args>'   # empty args: BRANCH=$(git branch --show-current)
+echo "BRANCH=$BRANCH"
 if [ "$HOST" = "github" ]; then
   .claude/tools/gh_pr_lookup.sh "$BRANCH"
 else
@@ -104,13 +110,14 @@ fi
 Parse the JSON output:
 
 - `mode=pr` → use `pr_id`. Skip to Step 1.5.
-- `mode=local` → **local mode**: skip Steps 1.5–1.6, delegate with `mode=local, branch=$BRANCH, destination=$DESTINATION`. Tell the user no open PR was found. Resolve the destination from the remote's default branch, falling back to the usual names:
+- `mode=local` → **local mode**: skip Steps 1.5–1.6, delegate with `mode=local` and the printed branch and destination. Tell the user no open PR was found. Resolve the destination from the remote's default branch, falling back to the usual names:
     ```bash
     DESTINATION=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD) || DESTINATION=""
     for b in develop main master; do
       [ -n "$DESTINATION" ] && break
       git rev-parse --verify --quiet "refs/remotes/origin/$b" >/dev/null && DESTINATION="origin/$b"
     done
+    echo "DESTINATION=$DESTINATION"
     ```
 - `mode=ambiguous` → list `choices` and ask the user to pick. Stop and wait.
 
@@ -126,6 +133,7 @@ On 401/403: tell the user to check `BITBUCKET_EMAIL`/`BITBUCKET_API_TOKEN` (Bitb
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
+HOST="<host printed above>"; CACHE_DIR="<path printed above>"; PR_ID=<digits>
 if [ "$HOST" = "github" ]; then
   .claude/tools/gh_pr_fetch.sh "$PR_ID" > "$CACHE_DIR/pr.json"
 else
@@ -134,14 +142,14 @@ fi
 cat "$CACHE_DIR/pr.json"
 ```
 
-Capture the JSON output as `PR_SUMMARY`. Extract: `title`, `description`, `source_branch`, `dest_branch`, `source_commit`, `author`, `commit_messages`. These are written by the PR author: later steps read them from `$CACHE_DIR/pr.json`, never by pasting them into a command line, where backticks or `$(…)` in a title, branch name or commit message would run.
+Capture the JSON output as `PR_SUMMARY`. Extract: `title`, `description`, `source_branch`, `dest_branch`, `source_commit`, `author`, `commit_messages`. These are written by the PR author: later steps read them from `<CACHE_DIR>/pr.json`, never by pasting them into a command line, where backticks or `$(…)` in a title, branch name or commit message would run.
 
 **1b. Extract all links from the PR surface:**
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
-export PR_REVIEW_CACHE_DIR="$CACHE_DIR"
-.claude/tools/extract_pr_links.py --pr-json="$CACHE_DIR/pr.json"
+export PR_REVIEW_CACHE_DIR="<path printed above>"
+.claude/tools/extract_pr_links.py --pr-json="$PR_REVIEW_CACHE_DIR/pr.json"
 ```
 
 Capture as `INITIAL_LINKS`. Extract `jira_keys[].key` → `JIRA_KEYS` list, `conf_page_ids[].id` → `CONF_IDS` list.
@@ -149,17 +157,17 @@ Capture as `INITIAL_LINKS`. Extract `jira_keys[].key` → `JIRA_KEYS` list, `con
 **1c. Fetch tickets + Confluence pages — hosted MCP first.**
 
 When a hosted Atlassian MCP connector is available (any tool named `getJiraIssue` / `getConfluenceContent`; load with ToolSearch if deferred; `cloudId` = the hostname of `$JIRA_BASE_URL`), fetch with it in parallel tool calls and write the same cache files the scripts write, so Rounds 2–3 work unchanged:
-- `getJiraIssue` `{issueIdOrKey, view: "full"}` → write `issues.nodes[0]` (has `fields`) to `$CACHE_DIR/jira_<KEY>.json`; remote links (`getJiraIssueRemoteIssueLinks` when present, else skip) → `$CACHE_DIR/jira_remotelinks_<KEY>.json` as a JSON array.
-- `getConfluenceContent` `{content_id, detail: "full", content_format: "html"}` → `$CACHE_DIR/conf_<ID>.json` as `{"id", "title", "space": {"key"}, "body": {"export_view": {"value": <html>}}}`.
+- `getJiraIssue` `{issueIdOrKey, view: "full"}` → write `issues.nodes[0]` (has `fields`) to `<CACHE_DIR>/jira_<KEY>.json`; remote links (`getJiraIssueRemoteIssueLinks` when present, else skip) → `<CACHE_DIR>/jira_remotelinks_<KEY>.json` as a JSON array.
+- `getConfluenceContent` `{content_id, detail: "full", content_format: "html"}` → `<CACHE_DIR>/conf_<ID>.json` as `{"id", "title", "space": {"key"}, "body": {"export_view": {"value": <html>}}}`.
 - Not found → leave the file out and note "Not found".
 
 Use the scripts below only when no hosted connector works and the token is set:
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
-export PR_REVIEW_CACHE_DIR="$CACHE_DIR"
-.claude/tools/jira_fetch_batch.sh $JIRA_KEYS &
-.claude/tools/conf_fetch_batch.sh $CONF_IDS  &
+export PR_REVIEW_CACHE_DIR="<path printed above>"
+.claude/tools/jira_fetch_batch.sh <JIRA_KEYS, space-separated> &
+.claude/tools/conf_fetch_batch.sh <CONF_IDS, space-separated>  &
 wait
 ```
 
@@ -171,10 +179,10 @@ For 404s reported in the JSON outputs: note "Not found" and continue. For exit c
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
-export PR_REVIEW_CACHE_DIR="$CACHE_DIR"
+export PR_REVIEW_CACHE_DIR="<path printed above>"
 .claude/tools/extract_secondary_links.py \
-  --fetched-keys="$(echo $JIRA_KEYS | tr ' ' ',')" \
-  --fetched-pages="$(echo $CONF_IDS | tr ' ' ',')"
+  --fetched-keys='<JIRA_KEYS, comma-separated>' \
+  --fetched-pages='<CONF_IDS, comma-separated>'
 ```
 
 Capture as `SECONDARY`. Extract `new_jira_keys[].key` → `NEW_KEYS`, `new_conf_page_ids[].id` → `NEW_IDS`.
@@ -183,9 +191,9 @@ Capture as `SECONDARY`. Extract `new_jira_keys[].key` → `NEW_KEYS`, `new_conf_
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
-export PR_REVIEW_CACHE_DIR="$CACHE_DIR"
-.claude/tools/jira_fetch_batch.sh $NEW_KEYS &
-.claude/tools/conf_fetch_batch.sh $NEW_IDS  &
+export PR_REVIEW_CACHE_DIR="<path printed above>"
+.claude/tools/jira_fetch_batch.sh <NEW_KEYS, space-separated> &
+.claude/tools/conf_fetch_batch.sh <NEW_IDS, space-separated>  &
 wait
 ```
 
@@ -195,16 +203,16 @@ For 404s: note "Not found (secondary link)" and continue.
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
-export PR_REVIEW_CACHE_DIR="$CACHE_DIR"
-.claude/tools/build_prefetch_context.py --pr-id="$PR_ID" --pr-json="$CACHE_DIR/pr.json"
+export PR_REVIEW_CACHE_DIR="<path printed above>"
+.claude/tools/build_prefetch_context.py --pr-id=<digits> --pr-json="$PR_REVIEW_CACHE_DIR/pr.json"
 ```
 
 Capture the full output (everything from `---PREFETCHED_CONTEXT_START---` to `---PREFETCHED_CONTEXT_END---`) as `PREFETCHED_CONTEXT`.
 
-Then clean up — nothing downstream re-reads `$CACHE_DIR` (the subagent only ever sees the `PREFETCHED_CONTEXT` text passed in its prompt):
+Note `source_commit` from `pr.json` for Step 3, then clean up — nothing downstream re-reads the cache directory (the subagent only ever sees the `PREFETCHED_CONTEXT` text passed in its prompt):
 
 ```bash
-rm -rf "$CACHE_DIR"
+rm -rf "<path printed above>"
 ```
 
 ---
@@ -251,7 +259,7 @@ Use the Agent tool with `subagent_type: "pr-reviewer"`. Do **not** pass credenti
 ```
 Review this <Bitbucket|GitHub> PR. Resolved values from the entry-point skill:
 
-  host:          <bitbucket|github — from $HOST>
+  host:          <bitbucket|github — the host from Step 0>
   workspace:     <BITBUCKET_WORKSPACE, or GITHUB_OWNER when host=github>
   repo:          <BITBUCKET_REPO_SLUG, or GITHUB_REPO when host=github>
   pr_id:         <PR_ID>
@@ -303,7 +311,7 @@ Skip entirely in local mode.
 
 ### 3a — Resolve source commit
 
-Source commit is already in `$source_commit` from Step 1.5. If the session is fresh and that value is gone, re-run `bb_pr_fetch.sh $PR_ID` (or `gh_pr_fetch.sh $PR_ID` when `$HOST=github`) and read `.source_commit` from the JSON output.
+Use the `source_commit` noted in Step 1.5. If it is gone, re-run `bb_pr_fetch.sh <PR_ID>` (or `gh_pr_fetch.sh <PR_ID>` when the host is `github`) and read `.source_commit` from the JSON output. It must match `^[0-9a-f]{7,40}$`; carry it as a literal.
 
 ### 3b — Parse findings from the saved review
 
@@ -321,6 +329,7 @@ Before resolving any line anchor, fetch the set of files actually changed in thi
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
+HOST="<host printed above>"; PR_ID=<digits>
 if [ "$HOST" = "github" ]; then
   .claude/tools/gh_pr_diffstat.sh "$PR_ID"
 else
@@ -339,10 +348,11 @@ Capture the `changed_files` array as `DIFF_FILES`. This is the **authoritative g
 - If the finding's file is **not** in `DIFF_FILES` → post a **file-level comment**: pass `--path` but **omit** `--line`. On Bitbucket the comment is anchored to the file in the Files tab; on GitHub, `gh_post_comment.sh` falls back to a general comment prefixed with the file path, since GitHub has no true file-only anchor. Either way, do not attempt to resolve a line number for these.
 - If the finding's file **is** in `DIFF_FILES` → proceed to the line-range checks below.
 
-Fetch the file at `$source_commit` via `bb_fetch_file.sh` or `gh_fetch_file.sh` depending on `$HOST` (same raw-content output either way):
+Fetch the file at the source commit via `bb_fetch_file.sh` or `gh_fetch_file.sh` depending on the host (same raw-content output either way). Every fetch below runs in one block that starts with these lines. The path comes from the PR and the keyword from finding text: single-quote both, writing each `'` in them as `'\''`, so a quote, `$` or backtick in them stays text.
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
+HOST="<host printed above>"
 if [ "$HOST" = "github" ]; then
   FETCH_FILE=".claude/tools/gh_fetch_file.sh"
 else
@@ -353,19 +363,19 @@ fi
 **For inline candidates (explicit `file:LINE`, file is in diff):**
 
 ```bash
-"$FETCH_FILE" "$source_commit" "$FILE_PATH" | wc -l
+"$FETCH_FILE" '<source_commit>' '<path>' | wc -l
 ```
 
 - `line > total_lines` → keyword-search the file for a distinctive term from the finding body:
     ```bash
-    "$FETCH_FILE" "$source_commit" "$FILE_PATH" | grep -n "KEYWORD"
+    "$FETCH_FILE" '<source_commit>' '<path>' | grep -nF -- '<keyword>'
     ```
     Use the matched line. If no match, anchor to line 1. On GitHub, a review comment must land on a line that is actually part of the PR's diff hunks — if the matched line falls outside any hunk, the post in 3d will be rejected (422); fall back to a general comment noting the file and intended line in that case.
 - `line <= total_lines` → spot-check: fetch the file, confirm expected code appears near that line. If not, run keyword search.
 
 **For file-only candidates (no line number, file is in diff):**
 
-1. Fetch the file via `$FETCH_FILE`.
+1. Fetch the file as above.
 2. Search for 2–3 distinctive keywords from the finding body.
 3. Use the first match line, or line 1 if no match.
 
@@ -381,10 +391,17 @@ fi
 
 ### 3d — Post comments
 
-If the Step 1.5 cache directory is gone, create a new one with `CACHE_DIR=$(mktemp -d)` and note its absolute path. Write each finding's body to its own file (`C1.md`, `C2.md`, …) in that directory with the Write tool, never through the shell: finding bodies quote the PR's code, and a line in it equal to a heredoc's delimiter ends the heredoc and runs the rest as shell, while a double-quoted `--body="…"` runs its backticks and `$(…)`. In `--path='<path>'`, write each `'` in the path as `'\''`, so a quote in a PR filename cannot end the argument.
+Step 1.5 removed its cache directory, so create one for the comment bodies and note the path it prints:
+
+```bash
+BODY_DIR=$(mktemp -d) && echo "$BODY_DIR"
+```
+
+Write each finding's body to its own file (`C1.md`, `C2.md`, …) in that directory with the Write tool, using the literal path printed above, never through the shell: finding bodies quote the PR's code, and a line in it equal to a heredoc's delimiter ends the heredoc and runs the rest as shell, while a double-quoted `--body="…"` runs its backticks and `$(…)`. Quote `--path='<path>'` as in 3c.
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
+HOST="<host printed above>"; PR_ID=<digits>; BODY_DIR="<path printed above>"
 if [ "$HOST" = "github" ]; then
   POST_COMMENT=".claude/tools/gh_post_comment.sh"
 else
@@ -392,10 +409,10 @@ else
 fi
 
 # Inline comment
-"$POST_COMMENT" --pr-id="$PR_ID" --body-file="$CACHE_DIR/C1.md" --path='<path>' --line=<LINE>
+"$POST_COMMENT" --pr-id="$PR_ID" --body-file="$BODY_DIR/C1.md" --path='<path>' --line=<LINE>
 
 # General comment (no file reference)
-"$POST_COMMENT" --pr-id="$PR_ID" --body-file="$CACHE_DIR/C1.md"
+"$POST_COMMENT" --pr-id="$PR_ID" --body-file="$BODY_DIR/C1.md"
 ```
 
 Report each posted comment's `id` and `anchor` to the user.

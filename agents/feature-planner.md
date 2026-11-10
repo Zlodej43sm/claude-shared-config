@@ -82,7 +82,11 @@ Before writing, derive the following from the CLAUDE.md in the context block (re
 
 Use these variables throughout the plan — never substitute Python/Node/Go-specific paths unless those are the actual values derived from CLAUDE.md.
 
-Create `<plan_dir>/<ticket_key>-<slug>.md` where `<slug>` is the first 4 words of the ticket summary lowercased and hyphenated.
+Create `<plan_dir>/<ticket_key>-<slug>.md`. Both parts come from the ticket, so build them strictly:
+
+- `<ticket_key>` must match `^[A-Z][A-Z0-9_]+-[0-9]+$`; otherwise stop and report it.
+- `<slug>`: the first 4 words of the ticket summary, lowercased, every run of characters outside `[a-z0-9]` replaced by `-`, leading and trailing `-` trimmed, at most 50 characters.
+- The final path must be a file directly inside `<plan_dir>`; never write anywhere else.
 
 The plan must follow this exact structure:
 

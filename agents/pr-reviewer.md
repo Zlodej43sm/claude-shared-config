@@ -68,9 +68,9 @@ Load credentials:
 eval "$(python3 .claude/tools/env_exports.py)"
 ```
 
-Required — depending on the `host` you were given — either `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN` (`host=bitbucket`) or `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`host=github`). Missing key → fail loud, stop. Never echo tokens. Jira/Confluence keys are optional: the caller (`pr-review`) pre-fetches Jira and Confluence through the hosted Atlassian MCP connector. Run the Jira/Confluence curl calls below only when that context is missing and `JIRA_EMAIL` / `JIRA_API_TOKEN` are set (not placeholders); otherwise skip them and note "Jira context not available" in the Context section.
+Required — depending on the `host` you were given — either `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN` (`host=bitbucket`) or `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`host=github`). Missing key → fail loud, stop. Never echo tokens. Jira/Confluence keys are optional: the caller (`pr-review`) pre-fetches Jira and Confluence through the hosted Atlassian MCP connector. Run the Jira/Confluence fetches below only when that context is missing and `JIRA_EMAIL` / `JIRA_API_TOKEN` are set (not placeholders); otherwise skip them and note "Jira context not available" in the Context section.
 
-Optional: `CONFLUENCE_BASE_URL` (same Atlassian tenant as `$JIRA_BASE_URL` — typically `$JIRA_BASE_URL/wiki/spaces`). If set and pre-fetched context was not provided, Confluence pages linked from the Jira ticket or PR description are fetched and used for both AC coverage and logic review. If absent, skip Confluence fetching and note it in the Context section.
+Optional: `CONFLUENCE_BASE_URL`, default `$JIRA_BASE_URL/wiki` (format: `env.example`). If pre-fetched context was not provided, Confluence pages linked from the Jira ticket or PR description are fetched and used for both AC coverage and logic review. If they cannot be fetched, note it in the Context section.
 
 Send **one message** with all these Bash calls in parallel (skip _PR mode only_ items in local mode; skip items marked _skip-if-prefetched_ when pre-fetched context is present; within each PR-mode item, follow the `host=bitbucket` or `host=github` branch):
 
@@ -78,8 +78,8 @@ Send **one message** with all these Bash calls in parallel (skip _PR mode only_ 
 2. **Diff** → always fetch, not in pre-fetched context. If diff > 2 000 lines, fetch per-file diffs only for highest-impact files.
    - `host=bitbucket` (PR): `GET ${base_url}/diff`
    - `host=github` (PR): `GET ${base_url}` with header `Accept: application/vnd.github.v3.diff` (same URL as item 1, content-negotiated to return the raw unified diff instead of JSON)
-   - local mode (either host): `git diff "$destination...HEAD"`
-   - In PR mode, also save the full raw diff to a private temp file (`DIFF_FILE=$(mktemp)`, `curl … -o "$DIFF_FILE"`): Step 4 builds the finding links from it. Check it holds every changed file (`grep -c '^diff --git'` against the diffstat count); a shell wrapper that filters output can truncate it.
+   - local mode (either host): `git diff '<destination>...HEAD'` (single-quote branch names wherever they reach the shell, writing each `'` in them as `'\''`)
+   - In PR mode, also save the full raw diff to a private temp file in the same command (`DIFF_FILE=$(mktemp) && echo "$DIFF_FILE" && curl … -o "$DIFF_FILE"`) and note the path it prints: Step 4 builds the finding links from it, and shell variables don't survive between commands. Check it holds every changed file (`grep -c '^diff --git'` against the diffstat count); a shell wrapper that filters output can truncate it.
 3. **Diffstat** _(PR mode)_ → always fetch. **Use this to classify files, not local `git diff`**, because local diff may include carry-over commits.
    - `host=bitbucket`: `GET ${base_url}/diffstat?pagelen=500`
    - `host=github`: `GET ${base_url}/files?per_page=100`; if the response has exactly 100 entries, paginate with `&page=2`, `&page=3`, … until a page returns fewer than 100
@@ -91,7 +91,7 @@ Send **one message** with all these Bash calls in parallel (skip _PR mode only_ 
    - `host=github`: two calls, normalized into the same fields —
      - Inline review comments: `GET ${base_url}/comments?per_page=100`. Map `id`→`id`, `user.login`→`author.display_name`, `body`→`content.raw`, `path`→`inline.path`, `line` (or `original_line` when `line` is null, meaning the comment is on an outdated diff position)→`inline.to`, `created_at`→`created_on`.
      - General thread comments: `GET <api_root>/repos/<owner>/<repo>/issues/<pr_id>/comments?per_page=100` — note this is GitHub's `/issues/` endpoint, not `/pulls/`, for a PR's non-inline comments. Map `id`, `user.login`→`author.display_name`, `body`→`content.raw`, `created_at`→`created_on`; no `inline` fields (these are general, not per-line).
-6. **JIRA ticket** _(skip-if-prefetched)_ — only fetch if no pre-fetched context block was provided. Extract first ticket key matching `[A-Z]+-\d+` from PR title, description, branch name, or commit messages. Fetch via the `get-jira-task` Skill tool. If it errors, note and continue.
+6. **JIRA ticket** _(skip-if-prefetched)_ — only fetch if no pre-fetched context block was provided. Extract the first ticket key from PR title, description, branch name, or commit messages; it must match `^[A-Z][A-Z0-9_]+-[0-9]+$`. Fetch it with `eval "$(python3 .claude/tools/env_exports.py)" && python3 .claude/tools/atlassian_fetch.py jira <KEY>` (output fields: the tool's header). If it errors, note and continue.
 7. **CI config snapshot** — always read the project's CI config: `bitbucket-pipelines.yml` (Bitbucket), or the most relevant file under `.github/workflows/` (GitHub — list the directory and read the one triggered on `pull_request`/`push`).
 8. **Extra docs** _(only when `extra_docs` was passed by the skill)_ — fetch each URL in the `extra_docs` list using the same Confluence fetch pattern as Step 1b. Classify and add to the logic spec / AC checklist.
 
@@ -107,16 +107,17 @@ If no pre-fetched context was provided: once you have the Jira ticket body and P
 - **PR description** (raw text): regex `https?://[^\s"'>]+/wiki/spaces/[^\s"'>]+`.
 - **Jira description plain text**: any URL fragment containing `/wiki/spaces/`.
 
-Deduplicate by page ID (the numeric segment after `/pages/`). For each unique page ID, fetch it:
+Deduplicate by page ID (the numeric segment after `/pages/`). Each ID must match `^[0-9]+$` (skip any other); put it into the command as that literal, never the URL itself: the URL comes from PR or ticket text, and `$(…)` inside double quotes would run. For each unique page ID, fetch it:
 
 ```bash
-CONFLUENCE_API_BASE="${CONFLUENCE_BASE_URL%/spaces}/rest/api"
+eval "$(python3 .claude/tools/env_exports.py)"
+CONFLUENCE_API_BASE="${CONFLUENCE_BASE_URL:-${JIRA_BASE_URL:?JIRA_BASE_URL must be set}/wiki}/rest/api"
 . .claude/tools/curl_auth.sh
 
 curl -sS --fail-with-body -L \
   -K <(curl_basic_auth "$JIRA_EMAIL" "$JIRA_API_TOKEN") \
   -H "Accept: application/json" \
-  "${CONFLUENCE_API_BASE}/content/${PAGE_ID}?expand=body.export_view,title,space"
+  "${CONFLUENCE_API_BASE}/content/<PAGE_ID>?expand=body.export_view,title,space"
 ```
 
 Convert `body.export_view.value` (HTML) to plain text: strip tags, preserve headings as `##`/`###`, list items as `- `. Truncate to 8 000 characters if longer.
@@ -146,7 +147,7 @@ If `CONFLUENCE_BASE_URL` is not set, or the page returns 404/403, note the skipp
 
 HTTP error handling: `401`/`403` → stop, tell user which key to check. `404` → report which of `{workspace, repo, PR id}` is likely wrong, stop. Other non-2xx → surface body, stop.
 
-**Local mode file list**: intersection of `git diff --name-only "$destination...HEAD"` and `git log --no-merges --name-only --format="" "$destination..HEAD" | sort -u`. This drops files touched only by merge-from-destination. If there are no non-merge commits, fall back to the full diff list and note it.
+**Local mode file list**: intersection of `git diff --name-only '<destination>...HEAD'` and `git log --no-merges --name-only --format="" '<destination>..HEAD' | sort -u`. This drops files touched only by merge-from-destination. If there are no non-merge commits, fall back to the full diff list and note it.
 
 ---
 
@@ -357,7 +358,7 @@ Every finding with a file anchor gets a link line right under its header that op
 
 ```bash
 .claude/tools/pr_line_links.py --host=<host> --owner=<workspace|owner> --repo=<repo> \
-  --pr=<pr_id> --commit=<source_commit> path/a.ts:42 path/b.ts:10-14 … < "$DIFF_FILE"
+  --pr=<pr_id> --commit=<source_commit> path/a.ts:42 path/b.ts:10-14 … < "<DIFF_FILE path printed in Step 1>"
 ```
 
 - `in_hunk: true` → write `PR line: <link>` (GitHub: `…/pull/<id>/changes#diff-<sha256(path)>R<line>`).

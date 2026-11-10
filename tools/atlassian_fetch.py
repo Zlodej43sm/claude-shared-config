@@ -228,11 +228,22 @@ def env(name: str, required: bool = True) -> str:
     return value.rstrip("/")
 
 
+class InsecureRedirect(urllib.error.URLError):
+    """A redirect to a non-https URL, refused."""
+
+    def __init__(self):
+        super().__init__("refused non-https redirect")
+
+
 class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
     """urllib copies every header, Authorization included, to wherever a redirect
-    points. Keep it only for a same-origin hop (same scheme, host and port)."""
+    points. Keep it only for a same-origin hop (same scheme, host and port), and
+    refuse any hop to a non-https URL (a downgrade would send the credentials or the
+    content in clear text)."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urlsplit(urljoin(req.full_url, newurl)).scheme != "https":
+            raise InsecureRedirect()
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new is not None and urlsplit(newurl)[:2] != urlsplit(req.full_url)[:2]:
             new.headers.pop("Authorization", None)
@@ -270,7 +281,7 @@ def attachment_meta(a: dict) -> dict:
 
 
 def cmd_jira(key: str) -> dict:
-    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*-\d+", key):
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*-[0-9]+", key):
         fail(1, f"{key!r} is not a Jira issue key")
     base = env("JIRA_BASE_URL")
     fields = "summary,status,priority,assignee,description,subtasks,comment,issuelinks,attachment"
@@ -348,6 +359,8 @@ def download(url: str, dest: str, max_bytes: int) -> str | None:
                 timeout=30)
         with resp:
             data = resp.read(max_bytes + 1)
+    except InsecureRedirect as e:
+        return e.reason
     except urllib.error.HTTPError as e:
         return f"HTTP {e.code}"
     except (urllib.error.URLError, TimeoutError, OSError) as e:
@@ -360,7 +373,7 @@ def download(url: str, dest: str, max_bytes: int) -> str | None:
 
 
 def cmd_attachments(key: str, directory: str, limit: int) -> dict:
-    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*-\d+", key):
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*-[0-9]+", key):
         fail(1, f"{key!r} is not a Jira issue key")
     base = env("JIRA_BASE_URL")
     issue = get(f"{base}/rest/api/3/issue/{key}?fields=attachment")
@@ -369,7 +382,7 @@ def cmd_attachments(key: str, directory: str, limit: int) -> dict:
     images, skipped = [], []
     for a in items:
         meta = attachment_meta(a)
-        if not re.fullmatch(r"\d+", meta["id"]):  # the id goes into the output path and the URL
+        if not re.fullmatch(r"[0-9]+", meta["id"]):  # the id goes into the output path and the URL
             skipped.append({"filename": meta["filename"], "reason": f"unexpected attachment id {meta['id']!r}"})
         elif meta["mime"] not in IMAGE_MIMES:
             skipped.append({"filename": meta["filename"], "reason": f"not a supported image ({meta['mime'] or 'unknown type'})"})
@@ -391,9 +404,9 @@ def cmd_attachments(key: str, directory: str, limit: int) -> dict:
 
 
 def page_id_from(arg: str) -> str:
-    if re.fullmatch(r"\d+", arg):
+    if re.fullmatch(r"[0-9]+", arg):
         return arg
-    m = re.search(r"/pages/(\d+)", arg) or re.search(r"[?&]pageId=(\d+)", arg)
+    m = re.search(r"/pages/([0-9]+)", arg) or re.search(r"[?&]pageId=([0-9]+)", arg)
     if not m:
         fail(1, f"no Confluence page id found in {arg!r} (short /wiki/x/ links can't be resolved - open the page and copy its full URL)")
     return m.group(1)
@@ -415,7 +428,7 @@ def cmd_confluence(arg: str) -> dict:
         "url": url,
         "markdown": markdown,
         "links": links,
-        "confluence_links": [u for u in links if re.search(r"/wiki/spaces/[^/]+/pages/\d+", u)],
+        "confluence_links": [u for u in links if re.search(r"/wiki/spaces/[^/]+/pages/[0-9]+", u)],
     }
 
 
