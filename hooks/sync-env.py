@@ -18,6 +18,9 @@ Behavior:
   uses the login). The file is then kept owner-only (0600). A placeholder, empty or
   unresolved op:// value is never written (it would break auth instead of falling back
   to the login).
+- Never sets `apiKeyHelper`, and removes a `printenv ANTHROPIC_API_KEY` helper it finds:
+  that helper exits 1 whenever the variable is missing from the environment Claude Code
+  starts in, which fails authentication instead of falling back to the login.
 - Warns on stderr if .env is missing, unparseable, or required keys are absent /
   still placeholders. Never blocks the session.
 """
@@ -60,10 +63,10 @@ SECRET_NAME = re.compile(
     r"|^OP_SESSION_|_PAT$|_PWD$",
     re.I,
 )
-# Registered as `apiKeyHelper` next to the env var: Claude Code asks once whether to use an
-# env-provided key and remembers a "No" per key (customApiKeyResponses.rejected in
-# ~/.claude.json), silently falling back to the claude.ai login. A helper has no prompt.
-API_KEY_HELPER = f"printenv {ANTHROPIC_KEY}"
+# Removed from settings.local.json on sight: `printenv` exits 1 whenever the variable is absent
+# from the environment Claude Code starts in, and a failing helper blocks authentication instead
+# of falling back to the env var or the `claude` login. A helper the user set otherwise is kept.
+STALE_API_KEY_HELPER = f"printenv {ANTHROPIC_KEY}"
 PLACEHOLDER_PATTERNS = (
     "replace-with-",
     "your-",
@@ -92,22 +95,12 @@ def drop_unusable_anthropic_key(env: dict[str, str], current_env: dict[str, str]
         current_env.pop(ANTHROPIC_KEY, None)
 
 
-def apply_api_key_helper(settings: dict, env: dict[str, str]) -> bool:
-    """Set `apiKeyHelper` while a usable ANTHROPIC_API_KEY is synced; remove it again
-    (only if it is ours) once there is none. A helper the user set themselves is kept.
-    Returns True if settings changed."""
-    has_key = usable_secret(env.get(ANTHROPIC_KEY, ""))
-    current = settings.get("apiKeyHelper")
-    if has_key and current != API_KEY_HELPER:
-        if current:
-            warn(f"apiKeyHelper already set ({current!r}); leaving it alone")
-            return False
-        settings["apiKeyHelper"] = API_KEY_HELPER
-        return True
-    if not has_key and current == API_KEY_HELPER:
-        del settings["apiKeyHelper"]
-        return True
-    return False
+def remove_stale_api_key_helper(settings: dict) -> bool:
+    """Drop the `printenv ANTHROPIC_API_KEY` apiKeyHelper. Returns True if settings changed."""
+    if settings.get("apiKeyHelper") != STALE_API_KEY_HELPER:
+        return False
+    del settings["apiKeyHelper"]
+    return True
 
 
 def gh_auth_token() -> str:
@@ -400,7 +393,7 @@ def main() -> int:
     merged = {**current_env, **persisted}
     env_changed = merged != original_env
     mcp_changed = apply_mcp_servers(project_root, settings, unused_mcp_servers(host, env))
-    helper_changed = apply_api_key_helper(settings, merged)
+    helper_changed = remove_stale_api_key_helper(settings)
     if not (env_changed or mcp_changed or helper_changed):
         if settings_path.is_file():
             os.chmod(settings_path, 0o600)
@@ -412,7 +405,7 @@ def main() -> int:
         warn(f"synced {len(persisted)} non-secret vars from .claude/.env into settings.local.json "
              "(secrets go to this session only)")
     if helper_changed:
-        warn("updated apiKeyHelper in settings.local.json (takes effect next session)")
+        warn(f"removed apiKeyHelper ({STALE_API_KEY_HELPER!r}) from settings.local.json")
     if mcp_changed:
         warn("updated enabled/disabledMcpjsonServers in settings.local.json (takes effect next session)")
     return 0

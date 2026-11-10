@@ -219,11 +219,13 @@ server), then:
   Code authenticates with it from the next session start and skills/agents calling the
   Anthropic API inherit it. An empty, placeholder or unresolved `op://` value is ignored
   (and removed from `settings.local.json` if it was synced earlier) so a bad key never
-  shadows your `claude` login. It also sets `apiKeyHelper` (`printenv ANTHROPIC_API_KEY`)
-  while a usable key is synced: Claude Code remembers a "No" to its "use this API key?"
-  prompt per key (`customApiKeyResponses.rejected` in `~/.claude.json`) and then silently
-  falls back to the login, whereas a helper has no prompt. A helper you set yourself is
-  left alone, and ours is removed again when the key goes away.
+  shadows your `claude` login. The hook never sets `apiKeyHelper`, and removes a
+  `printenv ANTHROPIC_API_KEY` helper it finds: that helper exits 1 whenever the variable is
+  missing from the environment Claude Code starts in (`apiKeyHelper failed: exited 1`), which
+  blocks authentication instead of falling back to the login. A helper you set yourself is
+  left alone. Claude Code asks once whether to use the synced key; if you answered "No", it
+  remembers that per key (`customApiKeyResponses.rejected` in `~/.claude.json`) and uses the
+  login, so remove the key's entry there to be asked again.
 - `settings.json.template` — generated (copied, not symlinked) into a project's
   `.claude/settings.json` the first time it's linked, the same way as `.mcp.json`
   above. Only generated when no `settings.json` exists yet; once a project has one,
