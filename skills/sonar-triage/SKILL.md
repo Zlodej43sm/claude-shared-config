@@ -72,7 +72,22 @@ CI config) for this run.
    split — `api/measures/component_tree` with
    `metricKeys=new_lines_to_cover,new_uncovered_lines`. Those values arrive under
    `measures[].periods[0].value`, **not** `measures[].value`; reading the wrong
-   one yields `None` for every file and looks like "no data".
+   one yields `None` for every file and looks like "no data". Send the token
+   through a pipe, never on the command line:
+
+   ```bash
+   eval "$(python3 .claude/tools/env_exports.py)"
+   . .claude/tools/curl_auth.sh
+   curl -sS -K <(curl_bearer_auth "$SONAR_API_TOKEN") --get \
+     --data-urlencode 'component=<projectKey>' \
+     --data-urlencode 'pullRequest=<n>' \
+     -d 'metricKeys=new_lines_to_cover,new_uncovered_lines' -d 'ps=500' \
+     "${SONAR_URL:-https://sonarcloud.io}/api/measures/component_tree"
+   ```
+
+   For a branch scope, replace the `pullRequest` line with
+   `--data-urlencode 'branch=<name>'`. Branch names can come from a PR author:
+   keep them inside the single quotes, writing each `'` as `'\''`.
 4. For each distinct rule key, `mcp__sonarqube__show_rule` once to get what the
    rule actually checks. Do not paraphrase a rule from its message alone.
 5. **Read the flagged code.** Every suggestion must be based on the actual file,

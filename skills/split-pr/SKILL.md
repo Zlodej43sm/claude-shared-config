@@ -42,7 +42,10 @@ The combined text gets threaded into every classification agent's prompt (Step 3
 
 Resolve `BASE_REF`/`HEAD_REF` per the Input section. If `<pr-identifier>` is a PR number or URL and hosting credentials are configured (`.claude/.env`), resolve the host with `.claude/tools/detect_git_host.sh` (or the URL's own domain, if `<pr-identifier>` is a full PR URL — that always wins) and use `bb_pr_lookup.sh`/`bb_pr_diffstat.sh` (Bitbucket) or `gh_pr_lookup.sh`/`gh_pr_diffstat.sh` (GitHub) to resolve it to a branch; otherwise treat it as a local branch/ref directly — this skill's core analysis only needs two git refs, not a live PR, so a missing or undetected host is never a blocker here.
 
+Shell variables don't survive between commands, and branch names can be PR-author controlled: every block that uses the refs starts by setting them as single-quoted literals, each `'` in a name written as `'\''`, so `$`, backticks or `(…)` in it stay text.
+
 ```bash
+BASE_REF='<base ref>'; HEAD_REF='<head ref>'
 git merge-base "$BASE_REF" "$HEAD_REF"
 git log "$BASE_REF..$HEAD_REF" --oneline --reverse
 git log "$BASE_REF..$HEAD_REF" --reverse --format='%H %s' | while read hash msg; do
@@ -59,7 +62,7 @@ From the commit list, per the lessons file: flag any commit immediately reverted
 .claude/tools/import_graph.sh "$BASE_REF" "$HEAD_REF"
 ```
 
-This is mechanical (grep + JSON parse, no model call) — trust its `edges` over any name-based guess. Read the output for:
+This is mechanical (grep + JSON parse, no model call) — trust its `edges` over any name-based guess. It assumes scoped TypeScript (NodeNext) packages under `packages/<name>/` (set `PACKAGES_DIR` for another folder); on any other layout its results are empty, not proof of independence. Read the output for:
 
 - **`edges`**: `{file, from_package, imports_package, specifiers}` — a package that imports another changed package's symbols cannot land in an earlier or parallel PR than the concern that adds those symbols.
 - **`reference_mismatches`**: a `package.json` workspace dependency with no matching `tsconfig.json` `references` entry. Report any non-empty result to the user as a standalone finding regardless of the split — per the lessons file, this has caught a real pre-existing gap before.
@@ -144,7 +147,7 @@ Tell the user the file path. Do not also paste the entire plan into chat if it's
 
 ## Step 7 — Adversarial self-critique (self-improvement — runs every time, not only on complaint)
 
-Put the draft plan on trial before showing it to the user, instead of waiting for them to catch a mistake. Spawn 2-3 independent critic agents in parallel via the `Agent` tool (fresh/general-purpose, **not** forks — they must not inherit your synthesis reasoning or they'll just agree with it). Give each critic only: the draft plan file's contents, the diff range (`BASE_REF...HEAD_REF`), the combined lessons text from Step 0, and Step 2's import-graph JSON. Instruct each to try to REFUTE the plan, specifically checking:
+Put the draft plan on trial before showing it to the user, instead of waiting for them to catch a mistake. Spawn 2-3 independent critic agents in parallel via the `Agent` tool (`subagent_type: "Explore"`: read-only, no Edit or Write, and fresh, **not** forks — they must not inherit your synthesis reasoning or they'll just agree with it). Give each critic only: the draft plan file's contents, the diff range (`BASE_REF...HEAD_REF`), the combined lessons text from Step 0, and Step 2's import-graph JSON. Instruct each to try to REFUTE the plan, specifically checking:
 
 - Does every edge cited in "Verdict on any split the user proposed" and the "Tracks" table actually appear in the import-graph JSON or a hunk a classification agent reported — not just asserted?
 - Is any file assigned wholly to one concern/track when its actual diff contains hunks from 2+ concerns?

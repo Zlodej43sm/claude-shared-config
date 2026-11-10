@@ -31,11 +31,14 @@ Entry point. Validates credentials, resolves the git host and PR number, then ei
 eval "$(python3 .claude/tools/env_exports.py)"
 HOST=$(.claude/tools/detect_git_host.sh) || HOST=""
 CACHE_DIR=$(mktemp -d)   # private; pass it to the agent, never use fixed /tmp names
+echo "HOST=$HOST CACHE_DIR=$CACHE_DIR"
 ```
 
-If `detect_git_host.sh` failed (empty `$HOST`), tell the user to set `GIT_HOST=bitbucket` or `GIT_HOST=github` in `.claude/.env` and stop.
+Shell variables don't survive between commands: carry the printed host and cache path as literals. `<CACHE_DIR>` below is that path, and a later block that tests the host starts with `HOST="<host printed above>"`.
 
-Required: when `$HOST=bitbucket` — `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`. When `$HOST=github` — `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN`.
+If `detect_git_host.sh` failed (empty host), tell the user to set `GIT_HOST=bitbucket` or `GIT_HOST=github` in `.claude/.env` and stop.
+
+Required: when the host is `bitbucket` — `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`. When it is `github` — `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN`.
 
 If any key is missing or a placeholder, tell the user which key to fix and **stop**. Do not spawn the agent on missing creds.
 
@@ -47,6 +50,7 @@ Parse `<pr-number>` from args (strip leading `#`). If args is empty, look up the
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
+HOST="<host printed above>"
 BRANCH=$(git branch --show-current)
 if [ "$HOST" = "github" ]; then
   .claude/tools/gh_pr_lookup.sh "$BRANCH"
@@ -67,14 +71,14 @@ On 401/403 → stop, tell the user to check `BITBUCKET_EMAIL`/`BITBUCKET_API_TOK
 
 ## Step 2 — Delegate to the `comment-responder` agent (reply mode)
 
-With `--fix`, skip to "Fix mode" below. Otherwise use the Agent tool with `subagent_type: "comment-responder"`. The agent fetches the comments, filters them, reads the code and composes the replies into `$CACHE_DIR/cr_replies_<pr>.json`, without posting (`dry_run: true`). Do **not** pass tokens in the prompt.
+With `--fix`, skip to "Fix mode" below. Otherwise use the Agent tool with `subagent_type: "comment-responder"`. The agent fetches the comments, filters them, reads the code and composes the replies into `<CACHE_DIR>/cr_replies_<pr>.json`, without posting (`dry_run: true`). Do **not** pass tokens in the prompt.
 
 **Prompt template:**
 
 ```
 Answer unanswered reviewer comments on a <Bitbucket|GitHub> PR.
 
-  host:            <bitbucket|github — from $HOST>
+  host:            <bitbucket|github — the host from Step 0>
   workspace:       <BITBUCKET_WORKSPACE, or GITHUB_OWNER when host=github>
   repo:            <BITBUCKET_REPO_SLUG, or GITHUB_REPO when host=github>
   pr_id:           <PR_ID>
@@ -87,7 +91,7 @@ Answer unanswered reviewer comments on a <Bitbucket|GitHub> PR.
 Run your full procedure (Steps 0–5) and return your completion summary as your final message.
 ```
 
-Show the agent's proposed replies. With `--dry-run`, stop here. Otherwise ask one question: post all, post some (the user names which), or post none. Then spawn the agent again with the same prompt but `mode: post`, `dry_run: false` and `replies_file: $CACHE_DIR/cr_replies_<pr>.json`, after removing any reply the user did not approve from that file. Surface its final message verbatim.
+Show the agent's proposed replies. With `--dry-run`, stop here. Otherwise ask one question: post all, post some (the user names which), or post none. Then spawn the agent again with the same prompt but `mode: post`, `dry_run: false` and `replies_file: <CACHE_DIR>/cr_replies_<pr>.json`, after removing any reply the user did not approve from that file. Surface its final message verbatim.
 
 ---
 
@@ -100,14 +104,16 @@ The goal is that every unanswered comment ends in one of two states: **fixed**, 
 ```bash
 git branch --show-current          # must equal the PR's source branch; else stop and say which to check out
 git status --porcelain             # uncommitted changes: tell the user before editing on top of them
-git fetch -q origin && git rev-list --left-right --count HEAD...origin/<source-branch>   # behind > 0: stop and say so
+git fetch -q origin && git rev-list --left-right --count 'HEAD...origin/<source-branch>'   # behind > 0: stop and say so
 ```
+
+The branch name is the PR author's: keep it inside the single quotes, writing each `'` in it as `'\''`, so `$`, backticks or `(…)` in it stay text.
 
 Read the project `CLAUDE.md` / contributing docs for the checks to run (typecheck, lint, format, tests) and any coding standards, including any review checklist it or the workspace-root `CLAUDE.md` points to (e.g. a DB migration checklist). A fix that touches a migration is re-checked against that checklist item by item, not only against the comment that asked for it. Note the PR's destination branch and whether sibling repositories are checked out next to this one (read-only references, see F2).
 
 ### F1 — Collect
 
-Spawn the `comment-responder` agent with the Step 2 prompt but `mode: collect` (and `dry_run: true`). It writes `$CACHE_DIR/cr_unanswered_<pr>.json` (id, kind, author, file, line, text, thread). Read that file. If it is empty, report that and stop.
+Spawn the `comment-responder` agent with the Step 2 prompt but `mode: collect` (and `dry_run: true`). It writes `<CACHE_DIR>/cr_unanswered_<pr>.json` (id, kind, author, file, line, text, thread). Read that file. If it is empty, report that and stop.
 
 ### F2 — Triage: verify before acting
 
@@ -148,7 +154,7 @@ Run the project's checks (typecheck, lint, format check, full test suite). Every
 
 ### F5 — Compose replies
 
-Same style rules as the agent's Step 4: 2–4 sentences, specific (file/function, what changed), no thanks-or-praise openers, concrete follow-up when deferring. Write them to `$CACHE_DIR/replies.json` as a list of `{id, kind, reply, text}` (`kind` and `text` come from the collected file).
+Same style rules as the agent's Step 4: 2–4 sentences, specific (file/function, what changed), no thanks-or-praise openers, concrete follow-up when deferring. Write them to `<CACHE_DIR>/replies.json` as a list of `{id, kind, reply, text}` (`kind` and `text` come from the collected file).
 
 Never write `Fixed:` for something that is not in the tree, and never post a reply that names a change before that change is pushed.
 
@@ -159,7 +165,7 @@ Show: the triage table, the check results, the `git diff --stat`, and every prop
 On approval:
 
 1. Commit in the repository's message style (follow the attribution instruction in the session) and push the PR's branch. Never force-push, never amend published commits, never touch another branch.
-2. Spawn the agent with `mode: post` and `replies_file: $CACHE_DIR/replies.json`. If the user approved only part of it, post only that part.
+2. Spawn the agent with `mode: post` and `replies_file: <CACHE_DIR>/replies.json`. If the user approved only part of it, post only that part.
 3. Report: what was fixed, what was declined and why, what was deferred and where it must be followed up (other repos, tickets, decisions), and anything the checks could not cover.
 4. Lessons: if a valid comment shows an expectation that no shared skill covers (for docs `doc-review`, for backend code `backend-implementation`), propose a generic rule for that skill's "Learning from reviewers" step in the report. Edit the skill only if the user agrees.
 
@@ -176,6 +182,7 @@ When you (the main loop, not the agent) fix code in response to a reviewer comme
     ```bash
     eval "$(python3 .claude/tools/env_exports.py)"
     . .claude/tools/curl_auth.sh   # credentials go through a pipe, never the command line
+    HOST="<host printed above>"
     if [ "$HOST" = "github" ]; then
       API="${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_OWNER/$GITHUB_REPO"
       # Inline review comments — repliable with --reply-to in step 2.
@@ -193,25 +200,19 @@ When you (the main loop, not the agent) fix code in response to a reviewer comme
     fi
     ```
 
-2. Show the reply and post it only after the user confirms. Write the text to a file with a quoted heredoc, so the shell expands nothing in it (replies often quote code or the reviewer), then pass the file:
-
-    ```bash
-    cat > "$CACHE_DIR/reply.md" <<'REPLY_EOF'
-    <reply text>
-    REPLY_EOF
-    ```
+2. Show the reply and post it only after the user confirms. Write the text to `<CACHE_DIR>/reply.md` (the literal path printed in Step 0) with the Write tool, never through the shell: replies often quote code or the reviewer, and a line equal to a heredoc's delimiter would end the heredoc and run the rest as shell. Then pass the file:
 
     - **Bitbucket** — a threaded reply under the original:
         ```bash
-        .claude/tools/bb_post_comment.sh --pr-id={pr_id} --parent=<PARENT_COMMENT_ID> --body-file="$CACHE_DIR/reply.md"
+        .claude/tools/bb_post_comment.sh --pr-id={pr_id} --parent=<PARENT_COMMENT_ID> --body-file="<CACHE_DIR>/reply.md"
         ```
     - **GitHub, original was an inline review comment** — the dedicated replies endpoint:
         ```bash
-        .claude/tools/gh_post_comment.sh --pr-id={pr_id} --reply-to=<PARENT_COMMENT_ID> --body-file="$CACHE_DIR/reply.md"
+        .claude/tools/gh_post_comment.sh --pr-id={pr_id} --reply-to=<PARENT_COMMENT_ID> --body-file="<CACHE_DIR>/reply.md"
         ```
     - **GitHub, original was a general issue comment** — GitHub has no threading for issue-level comments, so there is no true "reply". Start `reply.md` with the first ~80 characters of the original comment as a `> ` quote, then a blank line, then the reply, and post it as a new general comment; tell the user this is a best-effort thread, not a native GitHub reply:
         ```bash
-        .claude/tools/gh_post_comment.sh --pr-id={pr_id} --body-file="$CACHE_DIR/reply.md"
+        .claude/tools/gh_post_comment.sh --pr-id={pr_id} --body-file="<CACHE_DIR>/reply.md"
         ```
 
 ---

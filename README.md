@@ -164,10 +164,17 @@ server), then:
   server has no dynamic client registration, so Claude Code would need a pre-registered OAuth
   app. `gh auth login` is the equivalent — one browser sign-in, no key to create or store.
 
+  The `github` server runs read-only (`GITHUB_READ_ONLY=1`); the PR skills post over the
+  REST API (`tools/gh_post_comment.sh`, the `comment-responder` agent). The Docker images
+  are pinned by digest. The `uvx`/`npx` servers pin their package version and resolve its
+  dependencies as of a fixed date (`--exclude-newer` / `--before`), so a dependency published
+  later never gets in; move the date together with the version. The `notion` and `sonarqube`
+  servers can do whatever their token allows; `env.example` says how to limit each token.
+
   Nothing in the template is project-specific and nothing is generated from a project: each
   stdio server is launched through `tools/mcp-run.py`, which reads the project's `.claude/.env`
-  at server start and fills in the `{{KEY}}` (required) / `{{KEY|default}}` (optional)
-  placeholders, resolving `op://` 1Password references in memory (secrets are never written to
+  at server start and fills in the `{{KEY}}` (required) / `{{KEY|default}}` (optional; the default may
+  reference other keys as `{KEY}`, e.g. `{{CONFLUENCE_BASE_URL|{JIRA_BASE_URL}/wiki}}`) placeholders, resolving `op://` 1Password references in memory (secrets are never written to
   `.mcp.json`). `--fallback KEY=command` supplies a value when the key has no usable one
   (`GITHUB_TOKEN` ← `gh auth token`).
   Why a launcher: Claude Code expands `${VAR}` in `.mcp.json` only from the real process
@@ -194,35 +201,56 @@ server), then:
   | Key | This session's Bash calls | `settings.local.json` `env` (next session on) |
   | --- | --- | --- |
   | Non-secret (`GIT_HOST`, `JIRA_BASE_URL`, …) | yes (`CLAUDE_ENV_FILE`) | yes |
-  | Secret (an `op://` reference, or a name like `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*API_KEY*`) | yes, resolved | never; an earlier synced copy is removed |
+  | Secret (an `op://` reference, or a name matching `SECRET_NAME` in `hooks/sync-env.py`, such as `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*_KEY`, `*_PASS`, `*_PAT`, `*WEBHOOK*`, `OP_SESSION_*`) | yes, resolved | never; an earlier synced copy is removed |
   | `ANTHROPIC_API_KEY` | yes, resolved | yes, file kept owner-only (mode 600) |
 
   Skills and agents load `.claude/.env` with `eval "$(python3 .claude/tools/env_exports.py)"`,
   which parses the file instead of running it as shell; never `. .claude/.env`. A value with a
   space, such as `op://Dev Tooling/...`, would make bash run the text after the space as a
-  command. MCP servers resolve their own secrets through `tools/mcp-run.py`.
+  command. It prints values of non-secret keys only: a secret the session already holds is
+  skipped, and any other secret becomes `export K="$(… env_exports.py --value K)"`, resolved
+  when the line is eval'd, so no secret value reaches the transcript. Run on its own,
+  `--value` prints a secret, so `settings.json.template` asks before it. MCP servers resolve
+  their own secrets through `tools/mcp-run.py`, which also drops secret-named variables and
+  values with `user:pass@` URLs from the environment it passes to a server.
 
   It also handles `ANTHROPIC_API_KEY`: a real key in `.claude/.env` is written to
   `settings.local.json` `env` (and exported to the current session's Bash calls), so Claude
   Code authenticates with it from the next session start and skills/agents calling the
   Anthropic API inherit it. An empty, placeholder or unresolved `op://` value is ignored
   (and removed from `settings.local.json` if it was synced earlier) so a bad key never
-  shadows your `claude` login. It also sets `apiKeyHelper` (`printenv ANTHROPIC_API_KEY`)
-  while a usable key is synced: Claude Code remembers a "No" to its "use this API key?"
-  prompt per key (`customApiKeyResponses.rejected` in `~/.claude.json`) and then silently
-  falls back to the login, whereas a helper has no prompt. A helper you set yourself is
-  left alone, and ours is removed again when the key goes away.
+  shadows your `claude` login. The hook never sets `apiKeyHelper`, and removes a
+  `printenv ANTHROPIC_API_KEY` helper it finds: that helper exits 1 whenever the variable is
+  missing from the environment Claude Code starts in (`apiKeyHelper failed: exited 1`), which
+  blocks authentication instead of falling back to the login. A helper you set yourself is
+  left alone. Claude Code asks once whether to use the synced key; if you answered "No", it
+  remembers that per key (`customApiKeyResponses.rejected` in `~/.claude.json`) and uses the
+  login, so remove the key's entry there to be asked again.
 - `settings.json.template` — generated (copied, not symlinked) into a project's
   `.claude/settings.json` the first time it's linked, the same way as `.mcp.json`
   above. Only generated when no `settings.json` exists yet; once a project has one,
   it's free to diverge (different permissions, extra hooks) and `link-project.sh`
-  will never touch it again. Wires up `sync-env.py` (SessionStart) and
+  will never touch it again. Its permissions auto-allow git/`gh` commands that only read or
+  fetch, and each read-only `.claude/tools/` script by name (in the forms the skills call
+  them: `.claude/tools/x`, `bash …`, `python3 …`, `python3 -I …`); any other script prompts.
+  `ask` and `deny` rules sit on top (Claude Code checks deny, then ask, then allow, per
+  subcommand):
+
+  | Rule | Covers |
+  | --- | --- |
+  | ask | scripts that post or change something outside the machine (`*_post_comment.sh`, `jira_create_child.sh`), `mcp-run.py` (runs any command), `env_exports.py --value` (prints a secret), `workspace_docs.py sync` (`git merge`); reading `.env`, `.env.*` and `settings.local.json` |
+  | deny | `..` in a `.claude/tools/` path; git options that write a file, run a command or read a file outside the repo (`--output`, `diff --no-index`, `blame --contents`, `grep -O`/`--open-files-in-pager`, `fetch --upload-pack`; deny patterns use the shortest prefix git accepts); `gh auth --show-token`; credential files under `~` (`.ssh`, `.aws`, `.config/gh`, `.netrc`, `.git-credentials`, `.npmrc`, `.pypirc`, `.docker/config.json`, `.kube`, `.config/gcloud`, `.azure`, `.gnupg`, `.config/op`, `.claude/.credentials.json`) |
+
+  Since an existing `settings.json` is never regenerated, merge template changes into a
+  project's copy by hand. Wires up `sync-env.py` (SessionStart) and
   `biome-pretooluse.py` (PreToolUse on Write/Edit) — the latter no-ops silently on
   projects without a `node_modules/.bin/biome`, so it's safe as a shared default.
   `biome-pretooluse.py` checks prospective content via a throwaway sibling temp
   file (`.pretooluse-tmp-*`) in the same directory as the file being saved —
   add `**/.pretooluse-tmp-*` to the project's `.gitignore` so it doesn't get
-  picked up by VCS-aware tooling if a crash ever leaves one behind.
+  picked up by VCS-aware tooling if a crash ever leaves one behind. It skips files
+  that resolve into this repo (an edit through the `.claude/skills` symlink), so no
+  temp file lands in the shared tree.
 - `env.example` — template for a project's `.claude/.env`. Secret fields use
   `op://` (1Password) references; see the file header for setup. Includes both
   Bitbucket and GitHub credential blocks — `GIT_HOST` (or `tools/detect_git_host.sh`'s

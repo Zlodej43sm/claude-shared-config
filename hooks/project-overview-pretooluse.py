@@ -8,9 +8,10 @@ Why self-filter in the script rather than relying on the settings.json
 matcher/`if` field alone: the exact `tool_input` shape Claude Code sends for
 a Skill-tool call, and the exact `if`-field syntax for narrowing a matcher to
 one specific skill name, are NOT confirmed by documentation as of writing.
-This script tries several plausible field names, falls back to a substring
-scan of the whole `tool_input`, and — critically — treats every parse/lookup
-failure as "not a match" rather than guessing. Getting this wrong should
+This script checks several plausible field names for an exact skill name
+(never a substring match on the whole `tool_input`, which an argument that
+merely mentions the skill would trip), and — critically — treats every
+parse/lookup failure as "not a match" rather than guessing. Getting this wrong should
 always fail toward doing nothing, never toward misfiring on the wrong tool.
 
 Deliberately conservative about WHERE it scans: it always defaults ROOT to
@@ -24,7 +25,8 @@ Runs the scanner from this hook's own shared tree (hooks/../tools/), never a
 copy inside the scanned project: a repo's own `tools/*.py` is untrusted code.
 
 STDIN   PreToolUse hook payload JSON
-STDOUT  nothing (no-op) or {"hookSpecificOutput": {...}} on a confirmed match
+STDOUT  nothing (no-op) or {"hookSpecificOutput": {hookEventName, additionalContext}}
+        on a confirmed match — context only, never a permission decision
 EXIT    always 0 — this hook must never block or slow down any tool call
 """
 import json
@@ -46,10 +48,7 @@ def is_project_overview(payload: dict) -> bool:
         value = str(tool_input.get(key, "")).strip().lstrip("/")
         if value == "project-overview":
             return True
-    try:
-        return "project-overview" in json.dumps(tool_input)
-    except TypeError:
-        return False
+    return False
 
 
 def main() -> None:
@@ -93,7 +92,6 @@ def main() -> None:
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
             "additionalContext": context,
         }
     }))

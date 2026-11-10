@@ -74,6 +74,15 @@ is that repo's own, untrusted code.
 
 If `$SCANNER` is empty, Step 1 falls back to manual Glob/Grep — see below.
 
+Resolve the report directory now, before any `cd` into `ROOT`, so the report
+lands in the invoking project and never in an analyzed sibling repo. Note the
+absolute path it prints; Step 11 uses it:
+
+```bash
+OUT_DIR="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}/.claude/reviews/project-overview"
+echo "$OUT_DIR"
+```
+
 State the resolved `ROOT` and any `related_repos` at the top of the eventual
 report, so a wrong guess is obvious immediately.
 
@@ -309,7 +318,7 @@ is absent.
 ## Step 11 — Write and present the report
 
 Write the full report (template below) to
-`.claude/reviews/project-overview/<repo-slug>-<YYYY-MM-DD>.md`, where
+`<OUT_DIR>/<repo-slug>-<YYYY-MM-DD>.md` (the absolute path printed in Step 0), where
 `repo-slug` is `ROOT`'s directory name, lowercased, non-alphanumeric
 characters replaced with `-`, and the date comes from `date +%F` (never
 guessed). `mkdir -p` the directory first.

@@ -92,10 +92,10 @@ Tool names can differ by server version — use ToolSearch (`notion`) to confirm
 **2c — REST script.**
 
 ```bash
-.claude/tools/notion_fetch_page.sh '<URL-or-ID>'
+.claude/tools/notion_fetch_page.sh '<32-hex-id>'
 ```
 
-For linked pages (Step 3) pass the `linked_pages[].id` (32 hex characters), never its `url`: the URL comes from the page body.
+Pass the script only a page id, never a URL: URLs come from users, tickets and page bodies. For the root page, take the last 32-hex run or dashed UUID from the URL path (ignore everything after `?`), remove its dashes, lowercase it and check it matches `^[0-9a-f]{32}$`; if it doesn't, stop and ask the user for the page id. Don't strip dashes from the whole URL first: the title slug's last letters can be hex and would merge into the id. For linked pages (Step 3) pass `linked_pages[].id`, which is already in that form. A database id works too: the script falls back to the database endpoint.
 
 Output JSON: `kind` (`page` | `database`), `title`, `url`, `markdown`, `linked_pages[]` (`{id, url}`), `truncated`; databases also carry `rows[]` (`{id, title, url}`).
 

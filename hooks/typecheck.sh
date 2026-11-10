@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Typecheck hook used by Stop to sweep the whole monorepo before Claude stops.
+# Typecheck hook used by Stop to sweep the whole project before Claude stops.
 # Surfaces tsc errors via exit code 2 + stderr so Claude reacts instead of
 # leaving type errors for CI to catch (mirrors prettier-check.sh). Turbo's cache
 # makes this a near-instant no-op on turns that didn't touch typed sources.
@@ -20,8 +20,8 @@ fi
 
 cd "$PROJECT_DIR" || exit 1
 
-# `turbo run typecheck` == root `pnpm typecheck`. Invoke the binary directly so
-# the hook doesn't depend on corepack/pnpm being on the hook shell's PATH.
+# Runs the project's `typecheck` turbo task. Invoke the binary directly so the
+# hook doesn't depend on a package manager being on the hook shell's PATH.
 if ! out="$("$TURBO" run typecheck 2>&1)"; then
   echo "Typecheck failed — fix before stopping:" >&2
   echo "$out" >&2

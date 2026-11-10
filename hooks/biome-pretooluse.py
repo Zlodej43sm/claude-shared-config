@@ -17,13 +17,15 @@ normal file-mode `biome check`, then removed.
 Project-agnostic: everything is derived from CLAUDE_PROJECT_DIR and the
 project's own node_modules/biome.json, so this works unmodified on any repo
 that symlinks this shared hooks/ directory and has Biome installed. Projects
-without a node_modules/.bin/biome binary get a silent no-op, not a block.
+without a node_modules/.bin/biome binary get a silent no-op, not a block, and
+so do files that resolve into the shared config repo itself.
 """
 import json
 import os
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 LINTED_EXTENSIONS = (".ts", ".tsx", ".js", ".mjs", ".json")
 
@@ -62,6 +64,12 @@ def main() -> None:
     if tool_name not in ("Write", "Edit") or not file_path:
         return
     if not file_path.endswith(LINTED_EXTENSIONS):
+        return
+    # A file that resolves into this shared config repo (reached through a
+    # project's .claude/ symlink) is not the project's code: skip it rather
+    # than drop a temp file into the shared tree.
+    shared_repo = Path(__file__).resolve().parents[1]
+    if Path(os.path.realpath(file_path)).is_relative_to(shared_repo):
         return
 
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()

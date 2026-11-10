@@ -16,13 +16,18 @@ SCHEMA_IN
   Reads  $PR_REVIEW_CACHE_DIR/jira_{KEY}.json     — ticket data (all, skipping remotelinks files)
          $PR_REVIEW_CACHE_DIR/conf_{PAGE_ID}.json — Confluence pages
          $PR_REVIEW_CACHE_DIR/link_registry.json  — via-map (key: "jira:KEY"|"conf:ID", value: via)
-  env    JIRA_BASE_URL  (for constructing Confluence page URLs)
+  env    CONFLUENCE_BASE_URL, else JIRA_BASE_URL + /wiki  (for constructing Confluence page URLs)
          PR_REVIEW_CACHE_DIR (required — per-invocation cache dir, see pr-review SKILL.md Step 0)
 
 SCHEMA_OUT  stdout
   ---PREFETCHED_CONTEXT_START---
   ...
   ---PREFETCHED_CONTEXT_END---
+  PR, Jira and Confluence text is untrusted: inside the block, any copy of a block
+  marker is printed as `--- PREFETCHED_CONTEXT...`, a line of copied text that starts
+  with a section label (JIRA:, CONFLUENCE:, CROSS-SERVICE SIGNALS:, ...) is prefixed
+  with `> `, and single-line fields (titles, summary, names) are joined onto one line,
+  so fetched content cannot close the block or forge a section.
 
 EXIT  0=ok  1=bad-args  2=missing-cache-dir
 """
@@ -57,6 +62,7 @@ if not cache_dir:
     sys.exit(2)
 
 jira_base = os.environ.get("JIRA_BASE_URL", "").rstrip("/")
+conf_base = (os.environ.get("CONFLUENCE_BASE_URL") or jira_base + "/wiki").rstrip("/")
 
 # ── Load via-map ──────────────────────────────────────────────────────────────
 
@@ -157,14 +163,29 @@ def detect_signals(texts: list[tuple[str, str]]) -> list[str]:
                     signals.append(f"  - {pattern_type}: `{match.group(0)}` — found in {location}")
     return signals
 
+# ── Untrusted text ────────────────────────────────────────────────────────────
+
+MARKER = re.compile(r"-{3,}\s*(PREFETCHED_CONTEXT)", re.I)
+SECTION_LABEL = re.compile(
+    r"^[ \t]*(?=(?:PR|Source|Author|Commit|JIRA|Summary|Acceptance Criteria|Description \(excerpt\)"
+    r"|CONFLUENCE(?: PAGES)?|CROSS-SERVICE SIGNALS)[ \t]*:)",
+    re.I | re.M)
+
+def one_line(text: object) -> str:
+    """A single-line field: newlines would let it start a forged line."""
+    return re.sub(r"\s*[\r\n]+\s*", " ", str(text)).strip()
+
+def quote_labels(text: str) -> str:
+    """Multi-line copied text: a line that looks like one of our section labels is quoted."""
+    return SECTION_LABEL.sub("> ", text)
+
 # ── Build output ──────────────────────────────────────────────────────────────
 
 lines: list[str] = []
-lines.append("---PREFETCHED_CONTEXT_START---")
-lines.append(f"PR: #{args['pr-id']} — {args['title']}")
-lines.append(f"Source: {args['source-branch']} → {args['dest-branch']}")
-lines.append(f"Author: {args['author']}")
-lines.append(f"Commit: {args['source-commit'][:8]}")
+lines.append(f"PR: #{one_line(args['pr-id'])} — {one_line(args['title'])}")
+lines.append(f"Source: {one_line(args['source-branch'])} → {one_line(args['dest-branch'])}")
+lines.append(f"Author: {one_line(args['author'])}")
+lines.append(f"Commit: {one_line(args['source-commit'][:8])}")
 lines.append("")
 
 signal_texts: list[tuple[str, str]] = []
@@ -191,20 +212,20 @@ for path in sorted(glob.glob(os.path.join(cache_dir, "jira_*.json"))):
     desc_text = adf_text(desc_adf)[:5000] if desc_adf else ""
     ticket_via = via(f"jira:{ticket_key}")
 
-    lines.append(f"JIRA: {ticket_key} · {status} · {itype} · via {ticket_via}")
-    lines.append(f"Summary: {summary}")
+    lines.append(f"JIRA: {one_line(ticket_key)} · {one_line(status)} · {one_line(itype)} · via {one_line(ticket_via)}")
+    lines.append(f"Summary: {one_line(summary)}")
 
     ac_items = extract_ac(desc_text)
     if ac_items:
         lines.append("Acceptance Criteria:")
         for item in ac_items:
-            lines.append(f"  - {item}")
+            lines.append(f"  - {one_line(item)}")
     else:
         lines.append("Acceptance Criteria: (none found — check Confluence AC docs below)")
 
     if desc_text:
         lines.append("Description (excerpt):")
-        lines.append(desc_text[:2000])
+        lines.append(quote_labels(desc_text[:2000]))
 
     lines.append("")
     signal_texts.append((desc_text, f"jira:{ticket_key}"))
@@ -229,8 +250,8 @@ if conf_files:
         body    = d.get("body", {}).get("export_view", {}).get("value", "")
         ptype   = classify_page(title, strip_html(body[:500]))
         page_via = via(f"conf:{pid}")
-        url     = f"{jira_base}/wiki/spaces/{d.get('space',{}).get('key','')}/pages/{pid}"
-        lines.append(f"| {pid} | {title} | {ptype} | {page_via} | {url} |")
+        url     = f"{conf_base}/spaces/{d.get('space',{}).get('key','')}/pages/{pid}"
+        lines.append(f"| {pid} | {one_line(title).replace('|', '/')} | {ptype} | {one_line(page_via)} | {one_line(url)} |")
     lines.append("")
 
     for path in conf_files:
@@ -247,11 +268,11 @@ if conf_files:
         plain    = strip_html(body)[:6000]
         ptype    = classify_page(title, plain[:500])
         page_via = via(f"conf:{pid}")
-        lines.append(f"CONFLUENCE: {title} [{ptype}] [via {page_via}]")
-        lines.append(plain)
+        lines.append(f"CONFLUENCE: {one_line(title)} [{ptype}] [via {one_line(page_via)}]")
+        lines.append(quote_labels(plain))
         if len(plain) >= 6000:
-            url = f"{jira_base}/wiki/spaces/{d.get('space',{}).get('key','')}/pages/{pid}"
-            lines.append(f"<truncated — full page at {url}>")
+            url = f"{conf_base}/spaces/{d.get('space',{}).get('key','')}/pages/{pid}"
+            lines.append(f"<truncated — full page at {one_line(url)}>")
         lines.append("")
         signal_texts.append((plain, f"conf:{pid}"))
 
@@ -264,6 +285,6 @@ if signals:
 else:
     lines.append("  none detected")
 
-lines.append("---PREFETCHED_CONTEXT_END---")
-
-print("\n".join(lines))
+# every line above may carry copied text: no copy of a block marker may survive
+inner = MARKER.sub(lambda m: "--- " + m.group(1), "\n".join(lines))
+print("\n".join(["---PREFETCHED_CONTEXT_START---", inner, "---PREFETCHED_CONTEXT_END---"]))

@@ -49,16 +49,16 @@ Before you finish, reread the body and delete every sentence that doesn't help t
 
 ## Step 4 — Show, then post
 
-Show the title and body to the user. Post only with `--post` or a clear yes. Pass both through a JSON file, never inline in the command: a `'` in the title breaks a single-quoted argument, and `$(…)` in a double-quoted one runs.
+Show the title and body to the user. Post only with `--post` or a clear yes. Pass both through a JSON file, never inline in the command or through a shell heredoc: a `'` in the title breaks a single-quoted argument, `$(…)` in a double-quoted one runs, and a body line equal to a heredoc delimiter ends it and runs the rest as shell. Create a work directory and note the path it prints:
 
 ```bash
-WORK_DIR=$(mktemp -d)
-cat > "$WORK_DIR/title.txt" <<'TITLE_EOF'
-<title>
-TITLE_EOF
-cat > "$WORK_DIR/body.md" <<'BODY_EOF'
-<body>
-BODY_EOF
+WORK_DIR=$(mktemp -d) && echo "$WORK_DIR"
+```
+
+Write `<WORK_DIR>/title.txt` and `<WORK_DIR>/body.md` with the Write tool, using the literal path printed above (shell variables don't survive between commands, so each command below starts by setting `WORK_DIR` to it). Then build the JSON files:
+
+```bash
+WORK_DIR="<path printed above>"
 python3 - "$WORK_DIR" <<'PY'
 import json, sys
 d = sys.argv[1]
@@ -71,12 +71,13 @@ PY
 - GitHub: `gh api -X PATCH repos/<owner>/<repo>/pulls/<n> --input "$WORK_DIR/github.json"`. `gh pr edit` needs the `read:org` scope, which many tokens lack.
 - Bitbucket:
   ```bash
+  WORK_DIR="<path printed above>"
   . .claude/tools/curl_auth.sh   # credentials go through a pipe, never the command line
   curl -sS --fail-with-body -K <(curl_basic_auth "$BITBUCKET_EMAIL" "$BITBUCKET_API_TOKEN") \
     -X PUT -H "Content-Type: application/json" --data @"$WORK_DIR/bitbucket.json" \
     "https://api.bitbucket.org/2.0/repositories/$BITBUCKET_WORKSPACE/$BITBUCKET_REPO_SLUG/pullrequests/<id>"
   ```
 
-Then `rm -rf "$WORK_DIR"`.
+Then `rm -rf "<path printed above>"`.
 
 Report the PR link after posting.

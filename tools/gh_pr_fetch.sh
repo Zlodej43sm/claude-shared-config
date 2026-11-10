@@ -25,6 +25,7 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/curl_auth.sh"
 
 PR_NUMBER="${1:?ERROR: gh_pr_fetch.sh requires PR_NUMBER as \$1}"
+[[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || { echo "ERROR: PR_NUMBER must be a number" >&2; exit 1; }
 API="${GITHUB_API_URL:-https://api.github.com}"
 BASE="${API}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/pulls"
 

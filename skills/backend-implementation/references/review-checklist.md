@@ -17,12 +17,12 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - A field the caller doesn't send yet: optional now, release order (service → caller → confirm no other caller omits it → required) in the PR, follow-up ticket linked?
 - No strict validation against another service's enum unless the pins stay aligned (checking one value → compare a string)?
 - Edge cases (empty input, not found, duplicates) behave like the sibling methods?
-- Response field and description named after the operation (`upserted<Entities>`, `Returns the upserted <entities>`)?
+- Response field and description named after the operation, in the project's form, else the SKILL.md §10 default (`upserted<Entities>`, `Returns the upserted <entities>`)?
 - Every new response field has a consumer linked in the PR? A nullable field says what `null` means?
 - A field newly read from a cached or not-yet-released upstream response: missing normalised once to `null` (or the cache key changed), no `!== null` on a value that can be `undefined`?
 - Public API fields named and typed like their sibling types, additive, end inclusion stated? A consumer of a period end uses the provider's boundary rule in its check and in the date it shows?
 - No prerelease pin of another component left at merge; recompiled against the released version?
-- User-facing sentences one translation key each (ICU `select`/`plural`), offer dates formatted in the offer's time zone?
+- User-facing sentences one translation key each (ICU `select`/`plural`), dates shown in the owning entity's time zone?
 
 ## 3. Data validity and consistency
 - Business value ranges encoded in the schema (positive amounts, non-empty names, max lengths)? A deleted model check moved into the schema?
@@ -41,15 +41,16 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - A date or threshold rule tested on each side of the boundary, with constants named by their side?
 
 ## 5. Naming
-- Scenario titles: `Should <verb> <object> when <condition as the caller sees it>`, naming the asserted fields, "stored" not "existing"?
-- Unit tests: `should <exact outcome> when <collaborator/condition>`, no "fail"/"wrap"/"handle"?
+- Each new or renamed test and scenario title copies the form of the titles already in its file (then sibling files, then the repo's most common form)? `Should …` / `should …` only where there is nothing to copy (test-design Step 3).
+- Scenario titles name the condition as the caller sees it and the asserted fields, "stored" not "existing"?
+- Unit test titles name the exact outcome and the collaborator, no "fail"/"wrap"/"handle"?
 - Function names state everything the function does; provider/model/handler names follow the project's forms?
 - Every new column/field name grepped against the repo: same word and pair as the existing concept (`valid_from`/`valid_to`), no new synonym, same boundary semantics (exclusive end)?
 - After a rename in review: the old word grepped across all stacked PRs (fields, files, functions, types, constants, log prefixes), only a third party's own keys left?
 - Collection names say exactly what they hold (the filter that produced them, no "valid" on a set that keeps invalid entries)? File names short, extending an existing module's family instead of chaining qualifiers?
 
 ## 6. Code organisation and readability
-- One job per function; pure helpers with their own tests in `helpers/`, trivial single-use logic inline?
+- One job per function; pure helpers with their own tests where the project keeps them, else the SKILL.md §10 default (`helpers/`); trivial single-use logic inline?
 - No comments for intent or restating code; only DB/library quirks?
 - Touched types and signatures brought up to the standards; untouched code left alone; dead code from the change removed?
 - Every extracted function or file reused, test-worthy or a named domain conversion (otherwise inlined)? Shared constants and error classes generic, not per route or per flow? No magic literals in conditions; lists and types derived from one `as const` dictionary?

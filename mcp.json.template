@@ -7,12 +7,12 @@
         "--env", "JIRA_URL={{JIRA_BASE_URL}}",
         "--env", "JIRA_USERNAME={{JIRA_EMAIL}}",
         "--env", "JIRA_API_TOKEN={{JIRA_API_TOKEN}}",
-        "--env", "CONFLUENCE_URL={{CONFLUENCE_BASE_URL}}",
+        "--env", "CONFLUENCE_URL={{CONFLUENCE_BASE_URL|{JIRA_BASE_URL}/wiki}}",
         "--env", "CONFLUENCE_USERNAME={{JIRA_EMAIL}}",
         "--env", "CONFLUENCE_API_TOKEN={{JIRA_API_TOKEN}}",
         "--env", "ENABLED_TOOLS=jira_get_issue,jira_search,confluence_get_page,confluence_search",
         "--",
-        "uvx", "mcp-atlassian@0.24.1"
+        "uvx", "--exclude-newer", "2026-11-09T00:00:00Z", "mcp-atlassian@0.24.1"
       ]
     },
     "atlassian-oauth": {
@@ -40,11 +40,13 @@
         ".claude/tools/mcp-run.py",
         "--env", "GITHUB_PERSONAL_ACCESS_TOKEN={{GITHUB_TOKEN}}",
         "--env", "GITHUB_HOST={{GITHUB_HOST|}}",
+        "--env", "GITHUB_READ_ONLY=1",
         "--fallback", "GITHUB_TOKEN=gh auth token",
         "--",
         "docker", "run", "--init", "-i", "--rm",
         "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
         "-e", "GITHUB_HOST",
+        "-e", "GITHUB_READ_ONLY",
         "ghcr.io/github/github-mcp-server:v2.1.0@sha256:f6056fc10bfffcc8c81a6417a2e9ca12808647e8dd6049642a4feaadee0e0f8a"
       ]
     },
@@ -54,7 +56,7 @@
         ".claude/tools/mcp-run.py",
         "--env", "NOTION_TOKEN={{NOTION_TOKEN}}",
         "--",
-        "npx", "-y", "@notionhq/notion-mcp-server@2.6.1"
+        "npx", "-y", "--before=2026-11-09T00:00:00Z", "@notionhq/notion-mcp-server@2.6.1"
       ]
     },
     "notion-oauth": {

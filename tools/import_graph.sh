@@ -14,10 +14,19 @@
 # package.json "name" field. If neither yields a scope, edges/reference_mismatches
 # come back empty rather than matching the wrong workspace's packages.
 #
+# Layout assumptions — any other layout yields empty results, not an error:
+#   - every package lives at <PACKAGES_DIR>/<name>/ (default `packages`, i.e.
+#     `^packages/<name>/`); files outside it belong to no package;
+#   - TypeScript with NodeNext ESM imports: a relative import `./x.js` is read as
+#     the source file `./x.ts`, and an extensionless `./x` as `./x.ts` (index
+#     files and .tsx/.mts targets are not resolved).
+#
 # SCHEMA_IN
 #   $1  BASE_REF        e.g. develop or origin/develop
 #   $2  HEAD_REF         e.g. feat/some-branch (defaults to HEAD if omitted)
 #   env PACKAGE_SCOPE   optional — npm scope without the "@", e.g. "myorg"
+#   env PACKAGES_DIR    optional — repo-relative folder holding the packages
+#                       (default "packages", e.g. "libs" or "apps/packages")
 #
 # SCHEMA_OUT  stdout  JSON {
 #   "changed_files": ["packages/pkg-a/src/activities.ts", ...],
@@ -55,6 +64,10 @@ set -euo pipefail
 BASE_REF="${1:?ERROR: import_graph.sh requires BASE_REF as \$1}"
 HEAD_REF="${2:-HEAD}"
 
+# A ref starting with "-" would reach git as an option.
+case "${BASE_REF}" in -*) echo "ERROR: refs must not start with '-'" >&2; exit 1 ;; esac
+case "${HEAD_REF}" in -*) echo "ERROR: refs must not start with '-'" >&2; exit 1 ;; esac
+
 if ! git rev-parse --verify "${BASE_REF}" >/dev/null 2>&1; then
   echo "ERROR: base ref '${BASE_REF}' not found" >&2
   exit 2
@@ -70,6 +83,7 @@ git diff --name-status "${BASE_REF}...${HEAD_REF}" >"$NAME_STATUS_FILE"
 
 python3 - "$HEAD_REF" "$NAME_STATUS_FILE" <<'PYEOF'
 import json
+import os
 import re
 import subprocess
 import sys
@@ -88,7 +102,8 @@ for line in name_status_raw.splitlines():
     path = paths[-1]
     changed_files.append({"status": status[0], "path": path})
 
-PKG_RE = re.compile(r"^packages/([^/]+)/")
+PACKAGES_DIR = os.environ.get("PACKAGES_DIR", "packages").strip("/") or "packages"
+PKG_RE = re.compile(r"^" + re.escape(PACKAGES_DIR) + r"/([^/]+)/")
 packages_touched = sorted({
     m.group(1) for f in changed_files if (m := PKG_RE.match(f["path"]))
 })
@@ -109,7 +124,7 @@ def resolve_package_scope() -> str:
     if env_scope:
         return env_scope
     for pkg in packages_touched:
-        raw = show(head_ref, f"packages/{pkg}/package.json")
+        raw = show(head_ref, f"{PACKAGES_DIR}/{pkg}/package.json")
         if not raw:
             continue
         try:
@@ -123,8 +138,8 @@ def resolve_package_scope() -> str:
 PACKAGE_SCOPE = resolve_package_scope()
 
 # Matches both `import {X} from '@<scope>/pkg'` and `export {X} from '@<scope>/pkg'`
-# (a re-export creates the exact same build-ordering dependency as an import, but a
-# plain "import"-only regex misses it — see LESSONS.md's git-ops/scriptSafety entry).
+# (a re-export creates the exact same build-ordering dependency as an import, so a
+# plain "import"-only regex would miss a real ordering constraint).
 # Matches nothing if PACKAGE_SCOPE couldn't be resolved (no touched package.json has
 # a scoped name and $PACKAGE_SCOPE wasn't set) — cross-package edges degrade to an
 # empty list rather than silently matching the wrong scope.
@@ -136,10 +151,10 @@ SCOPED_IMPORT_RE = re.compile(
 ) if PACKAGE_SCOPE else None
 
 # Matches `import`/`export` ... `from './relative'` or `'../relative'` — used to
-# catch INTRA-package ordering constraints (see below): this repo builds each
-# package as one `tsc -b` unit, so a relative import between two files that are
-# both changed in this diff can force one to land before the other even though
-# they're in the same @<scope>/* package and never show up as a cross-package edge.
+# catch INTRA-package ordering constraints (see below): in a `tsc -b`-per-package
+# workspace each package builds as one unit, so a relative import between two files
+# that are both changed in this diff can force one to land before the other even
+# though they're in the same @<scope>/* package and never show up as a cross-package edge.
 RELATIVE_IMPORT_RE = re.compile(
     r"(import|export)\s+(type\s+)?"
     r"(?:\{([^}]*)\}|([A-Za-z_$][\w$]*))"
@@ -203,7 +218,7 @@ for f in changed_files:
             continue
         target_m = PKG_RE.match(target_path)
         if not target_m or target_m.group(1) != from_package:
-            continue  # only intra-PACKAGE edges belong here; cross-package relative imports don't exist in this workspace
+            continue  # only intra-PACKAGE edges belong here; cross-package relative imports are not expected in a scoped-package workspace
         specifiers = parse_specifiers(named, default)
         intra_package_edges.append({
             "file": f["path"],
@@ -215,8 +230,8 @@ for f in changed_files:
 
 reference_mismatches = []
 for pkg in packages_touched:
-    pkg_json_raw = show(head_ref, f"packages/{pkg}/package.json")
-    tsconfig_raw = show(head_ref, f"packages/{pkg}/tsconfig.json")
+    pkg_json_raw = show(head_ref, f"{PACKAGES_DIR}/{pkg}/package.json")
+    tsconfig_raw = show(head_ref, f"{PACKAGES_DIR}/{pkg}/tsconfig.json")
     if pkg_json_raw is None or tsconfig_raw is None:
         continue
     try:

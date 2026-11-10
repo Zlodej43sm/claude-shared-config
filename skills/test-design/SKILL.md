@@ -1,6 +1,6 @@
 ---
 name: test-design
-description: Rules for writing and reviewing tests in any language or stack (backend, frontend, infrastructure/DevOps, scripts, data pipelines) so every test is unique and necessary - no duplicates, no tests implied by other tests, no tests of what a library, framework or tool already guarantees, each behaviour proven once at the lowest level that can prove it. Use whenever you add, change, plan or review tests, and before finishing any implementation that touches tests. Generic - project test conventions come from the project's own docs.
+description: Rules for writing and reviewing tests in any language or stack (backend, frontend, infrastructure/DevOps, scripts, data pipelines) so every test is unique and necessary - no duplicates, no tests implied by other tests, no tests of what a library, framework or tool already guarantees, each behaviour proven once at the lowest level that can prove it, and every new test or scenario named in the form the tests around it already use (should-form only when there is none). Use whenever you add, change, plan or review tests, and before finishing any implementation that touches tests. Generic - project test conventions come from the project's own docs.
 ---
 
 # test-design — every test unique, every test needed
@@ -31,13 +31,17 @@ A test exists only if it proves a behaviour that **no other test proves** and th
 - **Other components' rules:** another service's input validation (mock its error only if your code reacts to it in a specific way), the validity of generated API documentation (the tooling owns it).
 
 ## Step 3 — shape of each test
-- One behaviour per test; its name states subject, condition and outcome (follow the project's naming doc).
+- One behaviour per test; its name states subject, condition and outcome.
+- **A new name copies the naming form of the tests around it.** Before you write or rename a test, read the titles already in that file (feature-file scenarios, `describe`/`it`/`test` titles) and copy their form: opening words, tense, subject, how the outcome and condition are phrased. A feature file whose scenarios read `<Subject> is not allowed when …` gets `<Subject> is not allowed when <new condition>`, not `Should reject …`; a unit file of `returns <CODE> when …` gets `returns <OTHER_CODE> when …`, not `should return …`.
+  - A new file copies its sibling files (same folder, then same module), then the form most of the repo uses (tally the first word of the existing titles).
+  - Only when there is nothing to copy does the default apply: the project's naming doc, else `should <outcome> [when <condition>]` (`Should …` in scenario titles).
+  - The file's form wins over the project's default form, and the default never justifies renaming untouched tests (a drive-by change). A test whose assertion you change keeps the file's form.
 - Fixtures are minimal and clean: only the data the behaviour needs, already in normalised form unless normalisation is the behaviour.
 - A failure test asserts **why** it failed (error type/code/message or the invalid fields), not just "failed"; no unrelated side-effect checks after it.
 - Assertions check the observable outcome of that behaviour; don't re-assert what a sibling test already asserts.
 - Mocked collaborator responses carry realistic values (what the collaborator really returns), not empty placeholders.
 - When one entry point handles several event types, each type gets its own test, so the test list shows which events it answers.
-- Time-dependent logic runs on a fixed clock (fake timers restored after each test, or the project's "given the date is" step), never on the real date, so the test does not change result when the calendar passes the boundary.
+- Time-dependent logic runs on a fixed clock (fake timers restored after each test, or the project's fixed-clock test step), never on the real date, so the test does not change result when the calendar passes the boundary.
 
 ## Step 4 — clean up what you touch
 - In files you change, delete or merge tests that duplicate each other or test library guarantees; say so in the PR (the "Tests" line: added / removed / why).

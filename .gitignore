@@ -1,6 +1,8 @@
 .DS_Store
 __pycache__/
 *.pyc
+# Crash leftovers of hooks/biome-pretooluse.py
+**/.pretooluse-tmp-*
 
 # Generated into projects from mcp.json.template by bin/link-project.sh
 /.idea

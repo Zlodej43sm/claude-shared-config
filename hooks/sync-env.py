@@ -1,4 +1,4 @@
-    #!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 SessionStart hook: make .claude/.env available to every Bash/agent/skill call.
 
@@ -18,6 +18,9 @@ Behavior:
   uses the login). The file is then kept owner-only (0600). A placeholder, empty or
   unresolved op:// value is never written (it would break auth instead of falling back
   to the login).
+- Never sets `apiKeyHelper`, and removes a `printenv ANTHROPIC_API_KEY` helper it finds:
+  that helper exits 1 whenever the variable is missing from the environment Claude Code
+  starts in, which fails authentication instead of falling back to the login.
 - Warns on stderr if .env is missing, unparseable, or required keys are absent /
   still placeholders. Never blocks the session.
 """
@@ -30,6 +33,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 BITBUCKET_KEYS = (
@@ -49,11 +53,20 @@ JIRA_KEYS = (
 )
 JIRA_CREDENTIAL_KEYS = ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")  # optional: else atlassian-oauth
 ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
-SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL", re.I)
-# Registered as `apiKeyHelper` next to the env var: Claude Code asks once whether to use an
-# env-provided key and remembers a "No" per key (customApiKeyResponses.rejected in
-# ~/.claude.json), silently falling back to the claude.ai login. A helper has no prompt.
-API_KEY_HELPER = f"printenv {ANTHROPIC_KEY}"
+# Secret-looking env var names: kept out of settings.local.json here and out of MCP child envs
+# by tools/mcp-run.py. Anchored parts avoid non-secrets such as SSH_AUTH_SOCK or TERM_SESSION_ID.
+# OP_SESSION_* are 1Password CLI session tokens; *_PAT personal access tokens; *_PWD passwords
+# (e.g. MYSQL_PWD).
+SECRET_NAME = re.compile(
+    r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL|WEBHOOK|COOKIE"
+    r"|(^|_)KEY$|(^|_)PASS(PHRASE)?($|_)|(^|_)(AUTH|SESSION)$|(^|_)DSN($|_)"
+    r"|^OP_SESSION_|_PAT$|_PWD$",
+    re.I,
+)
+# Removed from settings.local.json on sight: `printenv` exits 1 whenever the variable is absent
+# from the environment Claude Code starts in, and a failing helper blocks authentication instead
+# of falling back to the env var or the `claude` login. A helper the user set otherwise is kept.
+STALE_API_KEY_HELPER = f"printenv {ANTHROPIC_KEY}"
 PLACEHOLDER_PATTERNS = (
     "replace-with-",
     "your-",
@@ -82,22 +95,12 @@ def drop_unusable_anthropic_key(env: dict[str, str], current_env: dict[str, str]
         current_env.pop(ANTHROPIC_KEY, None)
 
 
-def apply_api_key_helper(settings: dict, env: dict[str, str]) -> bool:
-    """Set `apiKeyHelper` while a usable ANTHROPIC_API_KEY is synced; remove it again
-    (only if it is ours) once there is none. A helper the user set themselves is kept.
-    Returns True if settings changed."""
-    has_key = usable_secret(env.get(ANTHROPIC_KEY, ""))
-    current = settings.get("apiKeyHelper")
-    if has_key and current != API_KEY_HELPER:
-        if current:
-            warn(f"apiKeyHelper already set ({current!r}); leaving it alone")
-            return False
-        settings["apiKeyHelper"] = API_KEY_HELPER
-        return True
-    if not has_key and current == API_KEY_HELPER:
-        del settings["apiKeyHelper"]
-        return True
-    return False
+def remove_stale_api_key_helper(settings: dict) -> bool:
+    """Drop the `printenv ANTHROPIC_API_KEY` apiKeyHelper. Returns True if settings changed."""
+    if settings.get("apiKeyHelper") != STALE_API_KEY_HELPER:
+        return False
+    del settings["apiKeyHelper"]
+    return True
 
 
 def gh_auth_token() -> str:
@@ -269,11 +272,34 @@ def export_to_session(env: dict[str, str]) -> None:
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and not v.startswith("op://")
     ]
     try:
-        with open(target, "a", encoding="utf-8") as fh:
+        # 0600 from creation (and before writing to an existing file): never readable by others
+        fd = os.open(target, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        if hasattr(os, "fchmod"):  # not on Windows
+            try:
+                os.fchmod(fd, 0o600)
+            except OSError as exc:
+                warn(f"could not make CLAUDE_ENV_FILE owner-only ({exc}); writing it anyway")
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
-        os.chmod(target, 0o600)
     except OSError as exc:
         warn(f"could not write CLAUDE_ENV_FILE ({exc}); keys apply from the next session")
+
+
+def write_private(path: Path, text: str) -> None:
+    """Replace `path` atomically with a file that is 0600 from creation."""
+    # mkstemp: a fresh random name (a stale temp file from a crashed run cannot block
+    # the write), created O_EXCL with mode 0600
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            if hasattr(os, "fchmod"):  # not on Windows
+                os.fchmod(fh.fileno(), 0o600)
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def secret_keys(raw_env: dict[str, str]) -> set[str]:
@@ -367,20 +393,19 @@ def main() -> int:
     merged = {**current_env, **persisted}
     env_changed = merged != original_env
     mcp_changed = apply_mcp_servers(project_root, settings, unused_mcp_servers(host, env))
-    helper_changed = apply_api_key_helper(settings, merged)
+    helper_changed = remove_stale_api_key_helper(settings)
     if not (env_changed or mcp_changed or helper_changed):
         if settings_path.is_file():
             os.chmod(settings_path, 0o600)
         return 0
 
     settings["env"] = merged
-    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    os.chmod(settings_path, 0o600)
+    write_private(settings_path, json.dumps(settings, indent=2) + "\n")
     if env_changed:
         warn(f"synced {len(persisted)} non-secret vars from .claude/.env into settings.local.json "
              "(secrets go to this session only)")
     if helper_changed:
-        warn("updated apiKeyHelper in settings.local.json (takes effect next session)")
+        warn(f"removed apiKeyHelper ({STALE_API_KEY_HELPER!r}) from settings.local.json")
     if mcp_changed:
         warn("updated enabled/disabledMcpjsonServers in settings.local.json (takes effect next session)")
     return 0

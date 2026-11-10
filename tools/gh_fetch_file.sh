@@ -3,7 +3,7 @@
 #
 # SCHEMA_IN
 #   $1  COMMIT_HASH (full or short — GitHub's Contents API `ref` accepts either)
-#   $2  FILE_PATH   (e.g. src/art_telemetry/activities/persist.py)
+#   $2  FILE_PATH   (e.g. src/app/module.py)
 #   env GITHUB_OWNER  GITHUB_REPO  GITHUB_TOKEN
 #   env GITHUB_API_URL  (optional, default https://api.github.com)
 #
@@ -16,6 +16,9 @@ set -euo pipefail
 
 COMMIT="${1:?ERROR: gh_fetch_file.sh requires COMMIT_HASH as \$1}"
 FILE="${2:?ERROR:   gh_fetch_file.sh requires FILE_PATH as \$2}"
+[[ "$COMMIT" =~ ^[0-9A-Za-z._/-]+$ && "/$COMMIT/" != */../* ]] || { echo "ERROR: invalid COMMIT_HASH" >&2; exit 1; }
+[[ "/$FILE/" != */../* ]] || { echo "ERROR: FILE_PATH must not contain a .. segment" >&2; exit 1; }
+FILE_ENC=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe="/"))' "$FILE")
 
 API="${GITHUB_API_URL:-https://api.github.com}"
 BASE="${API}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents"
@@ -26,7 +29,7 @@ trap 'rm -f "$TMP_FILE"' EXIT
 HTTP_STATUS=$(curl -sSL -w "%{http_code}" \
   -K <(curl_bearer_auth "$GITHUB_TOKEN") -H "Accept: application/vnd.github+json" \
   --get --data-urlencode "ref=${COMMIT}" \
-  "${BASE}/${FILE}" \
+  "${BASE}/${FILE_ENC}" \
   -o "$TMP_FILE")
 
 case "$HTTP_STATUS" in

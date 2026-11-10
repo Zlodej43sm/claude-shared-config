@@ -3,7 +3,7 @@
 #
 # SCHEMA_IN
 #   $@  Confluence page IDs (integers)
-#   env JIRA_BASE_URL  JIRA_EMAIL  JIRA_API_TOKEN
+#   env JIRA_BASE_URL  JIRA_EMAIL  JIRA_API_TOKEN  CONFLUENCE_BASE_URL (optional, default $JIRA_BASE_URL/wiki)
 #   env PR_REVIEW_CACHE_DIR  — per-invocation cache dir (see pr-review SKILL.md Step 0)
 #
 # SCHEMA_OUT  stdout JSON
@@ -21,7 +21,7 @@ set -uo pipefail
 : "${PR_REVIEW_CACHE_DIR:?ERROR: PR_REVIEW_CACHE_DIR must be set (see pr-review SKILL.md Step 0)}"
 mkdir -p "$PR_REVIEW_CACHE_DIR"
 
-CONF_API="${JIRA_BASE_URL}/wiki/rest/api"
+CONF_API="${CONFLUENCE_BASE_URL:-${JIRA_BASE_URL:?ERROR: JIRA_BASE_URL must be set}/wiki}/rest/api"
 STATUS_DIR=$(mktemp -d)
 trap 'rm -rf "$STATUS_DIR"' EXIT
 
