@@ -9,6 +9,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - Each component does only what its type may do (owns data / orchestrates / consumes / adapts)?
 - No one-line wrapper around an existing client call; the handler's flow not split into internal helpers with return-value protocols?
 - A new provider or model wrapper on a table that already has one: could the existing `get…` take an optional filter, or the existing `update…` take partial changes, instead?
+- A model that needs raw rows reads the providers, not another model's API response (no `Date` → string → `Date` round trip, no second query to recover a value the first model hid)? Queries counted on every path, the fewest kept?
 - A security/fraud/eligibility rule enforced by the operation that performs the action (not only a preflight `can…` method), through one shared function, on every entry point that reaches it? Fails closed when its input is missing, and a caller handles "not found" itself rather than forwarding `undefined`?
 
 ## 2. Contracts and API design
@@ -16,7 +17,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - Breaking or stricter change (partial → full, optional → required, removed/renamed field) identified, every caller checked, release order stated? "Caller sends every field" verified by compiling each caller against the new types (a field covered only by a schema default still breaks the caller's types when request types are the schema's output)? The caller compiled against the published package version, not a local build of the provider's branch (the base may have moved and changed transitive pins)?
 - A field the caller doesn't send yet: optional now, release order (service → caller → confirm no other caller omits it → required) in the PR, follow-up ticket linked?
 - No strict validation against another service's enum unless the pins stay aligned (checking one value → compare a string)?
-- Edge cases (empty input, not found, duplicates) behave like the sibling methods?
+- Edge cases (empty input, not found, duplicates) behave like the sibling methods? A sibling that reads the same entity checks a flag or end date (`isActive`, `validTo`) this path skips: same rule applied, or the difference stated, or the question asked?
 - Response field and description named after the operation, in the project's form, else the SKILL.md §10 default (`upserted<Entities>`, `Returns the upserted <entities>`)?
 - Every new response field has a consumer linked in the PR? A nullable field says what `null` means?
 - A field newly read from a cached or not-yet-released upstream response: missing normalised once to `null` (or the cache key changed), no `!== null` on a value that can be `undefined`?
@@ -36,7 +37,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 ## 4. Tests (see the `test-design` skill)
 - Each test proves one unique behaviour at the lowest level; no duplicates, no implied tests, no schema-library tests at any entry point (methods, API and webhook routes with an invalid payload → 400, consumers)?
 - Failure tests assert the reason (error code/message/fields) and nothing unrelated?
-- Model-only logic proven by unit tests; functional fixtures clean?
+- Model-only logic proven by unit tests; functional fixtures clean? Unit tests mock the providers, not a sibling model, and assert results, not the order of `mockResolvedValueOnce` calls?
 - No test of a downstream service's validation or of generated API docs? Mocked collaborator responses carry realistic values? One scenario per event type the endpoint handles?
 - A date or threshold rule tested on each side of the boundary, with constants named by their side?
 
@@ -55,6 +56,8 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - Touched types and signatures brought up to the standards; untouched code left alone; dead code from the change removed?
 - Every extracted function or file reused, test-worthy or a named domain conversion (otherwise inlined)? Shared constants and error classes generic, not per route or per flow? No magic literals in conditions; lists and types derived from one `as const` dictionary?
 - Lookup maps built only from the rows they are read with, not from merged result sets?
+- A rule a sibling module already implements (expiry, eligibility window) moved to one shared helper in `helpers/` with its own test, not copied; a helper used from one place inlined?
+- Exported list constants typed `readonly T[]` and copied into responses? Constant names state what the set holds (`COUNTRIES_WITHOUT_<FEATURE>`)?
 
 ## 7. Errors and logging (details: `logging.md`)
 - Project error classes with `cause`; static messages; one log per failure?
