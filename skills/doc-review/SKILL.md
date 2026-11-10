@@ -7,7 +7,7 @@ description: Review or write technical documents - architecture docs, design doc
 
 Generic and reusable: no company or project data lives here. Rules come from:
 1. This skill: §A–§I below.
-2. The project's docs conventions: follow the root `CLAUDE.md` / `AGENTS.md` (workspace and repo) to its docs layout, glossary (`CONTEXT.md` or similar), writing-style and review docs. Project rules win over this skill.
+2. The project's docs conventions: follow the root `CLAUDE.md` / `AGENTS.md` (workspace and repo) to its docs layout, glossary (`CONTEXT.md` or similar), writing-style and review docs. That includes any reviewer profiles or review-lessons docs: review with those reviewers' questions. Project rules win over this skill.
 
 A finding cites the rule it breaks (`doc-review §X`, or the project doc path + section).
 
@@ -66,6 +66,7 @@ Missing answers are findings; phrase them as the question a reviewer would ask.
 **§H One home, right altitude.**
 - Each rule lives in one canonical section. Other docs link to it instead of restating it: two copies drift and end up contradicting each other. A rule repeated inside one doc (e.g. once per mode) is stated once.
 - An architecture or contract doc states the rules and contracts that callers and operators depend on. Implementation detail (TTL and timeout values, log event names, internal keys, storage paths, function names) stays in the code or the owning repo's docs.
+- A value derived from config or code next to it (a time budget computed from probe fields, a count of files) is not written out: state the rule once and link to it. The number goes stale when an input changes.
 - A glossary entry is one short sentence of meaning, with no mechanism. Keep it within the project's length cap if it has one.
 
 **§I The change agrees with itself.**

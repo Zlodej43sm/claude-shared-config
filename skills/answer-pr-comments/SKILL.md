@@ -167,7 +167,7 @@ On approval:
 1. Commit in the repository's message style (follow the attribution instruction in the session) and push the PR's branch. Never force-push, never amend published commits, never touch another branch.
 2. Spawn the agent with `mode: post` and `replies_file: <CACHE_DIR>/replies.json`. If the user approved only part of it, post only that part.
 3. Report: what was fixed, what was declined and why, what was deferred and where it must be followed up (other repos, tickets, decisions), and anything the checks could not cover.
-4. Lessons: if a valid comment shows an expectation that no shared skill covers (for docs `doc-review`, for backend code `backend-implementation`), propose a generic rule for that skill's "Learning from reviewers" step in the report. Edit the skill only if the user agrees.
+4. Lessons: if a valid comment shows an expectation that no shared skill covers (for docs `doc-review`, for backend code `backend-implementation`), propose a generic rule for that skill's "Learning from reviewers" step in the report. Edit the skill only if the user agrees. If the project keeps reviewer profiles or review-lessons docs (the repo or workspace-root `CLAUDE.md` points to them), record this round there as the project's own procedure says: each comment with its verified status, plus any new question or review habit in that reviewer's profile.
 
 If the user declines or edits something, do exactly that and nothing more.
 

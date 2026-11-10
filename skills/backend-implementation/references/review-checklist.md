@@ -23,6 +23,9 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - A field newly read from a cached or not-yet-released upstream response: missing normalised once to `null` (or the cache key changed), no `!== null` on a value that can be `undefined`?
 - Public API fields named and typed like their sibling types, additive, end inclusion stated? A consumer of a period end uses the provider's boundary rule in its check and in the date it shows?
 - No prerelease pin of another component left at merge; recompiled against the released version?
+- A new item (service, setting, route, group, worker) appears everywhere its closest sibling appears? Grep the sibling's name across the repo: config and local override files, build options, test case tables and maps, the e2e runner's dependencies, and the docs that list the siblings.
+- Local or test setup follows the other service's deployed contract (who creates the database, privileges, secrets, build-time CA, run modes such as a service on the host)? Otherwise the difference is written down on both sides.
+- A constraint only stated in a comment (allowed characters, ordering, "set once") is either enforced by a check or answered in the PR with why it can't be?
 - User-facing sentences one translation key each (ICU `select`/`plural`), dates shown in the owning entity's time zone?
 
 ## 3. Data validity and consistency

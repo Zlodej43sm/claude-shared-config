@@ -32,7 +32,7 @@ eval "$(python3 .claude/tools/env_exports.py)"
 
 Required: when `host=bitbucket` — `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`. When `host=github` — `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`GITHUB_API_URL` optional). Missing key → fail loud, stop.
 
-Then read `CLAUDE.md` for project layout, conventions, and any invariants the reviewer may have flagged.
+Then read `CLAUDE.md` for project layout, conventions, and any invariants the reviewer may have flagged. If it, or the workspace-root `CLAUDE.md`, points to a profile of this reviewer or to review-lessons docs, read them too. Answer in the terms the reviewer uses, and cite the earlier settled thread when a question repeats.
 
 ---
 

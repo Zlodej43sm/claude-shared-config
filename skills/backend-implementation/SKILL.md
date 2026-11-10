@@ -78,6 +78,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 - Such a rule fails closed: a missing input it needs denies the action. If a rollout forces a fail-open period, state it in the PR, name the follow-up ticket, and keep the window short. A caller that loads the data for the rule (the user, the account) handles "not found" itself with the not-eligible error, instead of passing `undefined` on and relying on the downstream service to reject it.
 - Check ownership and permissions on every request, deny by default; allow-list outbound URLs and file paths built from input; no `eval` or shell commands with input.
 - Ask before adding a dependency; upgrade majors one at a time, then build and run all tests.
+- A container start script does its setup (migrations, certificates), then `exec "$@"`, with the default command in `CMD`: every process the image runs (API, worker, one-off command) gets the setup and receives signals directly. Before you fix a start command, read the epic's planned tickets and the sibling repos' entrypoints for other processes that will run the same image.
 
 ## 7. Readability
 - Names carry the meaning: intent-named functions, named booleans, variables naming the situation, response fields naming what they hold.
@@ -118,6 +119,7 @@ Follow the project's naming doc and the surrounding code first (test titles: the
 - Touch only what the task needs: no drive-by refactors, renames or formatting; open a ticket for unrelated issues. In code the change must touch anyway, bring the touched types and signatures up to the standards (e.g. a record aliased to an API type, an exported one-off input alias); leave untouched statements (such as an old log line) as they are. A migration PR holds only the migration; code using it ships next and names the order.
 - Small PRs, one topic, draft until ready; never bypass hooks; tests included. Conventional Commit title with the scope the project uses. Keep the description true after every push: re-read it against the code (behaviour on missing fields, defaults, test counts, release order).
 - The PR description says where a new rule is **not** enforced (paths that rely on another system to check it), and lists the manual steps needed before the production release (config to create in a third-party tool, with the exact value).
+- Before each commit read the staged file list: no tool output (test reports, caches, IDE files, build output) is committed. An ignore rule belongs in this PR only when this PR's own commit added such a file; otherwise it goes to its own PR.
 - In review threads say "done" only for pushed code; link the guideline instead of re-arguing.
 - A pin on another component's prerelease build is a merge blocker: the PR says so with the release order, and the released version replaces it before merge. Recompile and re-check behaviour then: the prerelease may predate the provider's last review fixes (a renamed field, a changed boundary).
 - Handle only the events and inputs the ticket's data needs. A pre-existing gap you notice (an unhandled event type, an old status code) goes to its own ticket, not into this PR.
