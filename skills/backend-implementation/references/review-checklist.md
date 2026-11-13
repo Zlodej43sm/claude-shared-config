@@ -20,6 +20,8 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - Edge cases (empty input, not found, duplicates) behave like the sibling methods? A sibling that reads the same entity checks a flag or end date (`isActive`, `validTo`) this path skips: same rule applied, or the difference stated, or the question asked?
 - Response field and description named after the operation, in the project's form, else the SKILL.md §10 default (`upserted<Entities>`, `Returns the upserted <entities>`)?
 - Every new response field has a consumer linked in the PR? A nullable field says what `null` means?
+- Contract lean: no `.describe()` on self-explaining fields, no new or reworded method/response description the task doesn't need, no `refine` that callers already respect?
+- New request fields flat, with the contract's existing actor prefix (`<actor>Email`, `<actor>PhoneNumber`) and the source entity's word; no nested object with generic keys? Field names say what they hold, not how the caller selected it (the service stays agnostic)?
 - A field newly read from a cached or not-yet-released upstream response: missing normalised once to `null` (or the cache key changed), no `!== null` on a value that can be `undefined`?
 - Public API fields named and typed like their sibling types, additive, end inclusion stated? A consumer of a period end uses the provider's boundary rule in its check and in the date it shows?
 - No prerelease pin of another component left at merge; recompiled against the released version?
@@ -49,6 +51,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - Scenario titles name the condition as the caller sees it and the asserted fields, "stored" not "existing"?
 - Unit test titles name the exact outcome and the collaborator, no "fail"/"wrap"/"handle"?
 - Function names state everything the function does; provider/model/handler names follow the project's forms?
+- Error/reason codes subject first like their enum's other values (`<SUBJECT>_HAS_<STATE>`)? Test case labels use the field's words?
 - Every new column/field name grepped against the repo: same word and pair as the existing concept (`valid_from`/`valid_to`), no new synonym, same boundary semantics (exclusive end)?
 - After a rename in review: the old word grepped across all stacked PRs (fields, files, functions, types, constants, log prefixes), only a third party's own keys left?
 - Collection names say exactly what they hold (the filter that produced them, no "valid" on a set that keeps invalid entries)? File names short, extending an existing module's family instead of chaining qualifiers?
@@ -60,6 +63,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - Every extracted function or file reused, test-worthy or a named domain conversion (otherwise inlined)? Shared constants and error classes generic, not per route or per flow? No magic literals in conditions; lists and types derived from one `as const` dictionary?
 - Lookup maps built only from the rows they are read with, not from merged result sets?
 - A rule a sibling module already implements (expiry, eligibility window) moved to one shared helper in `helpers/` with its own test, not copied; a helper used from one place inlined?
+- No new type alias where the contract type works (`<Method>Request & { … }`); a needed type in the project's types file, not at the top of a model or helper? No helper for a primitive comparison; counts checked by truthiness?
 - Exported list constants typed `readonly T[]` and copied into responses? Constant names state what the set holds (`COUNTRIES_WITHOUT_<FEATURE>`)?
 
 ## 7. Errors and logging (details: `logging.md`)
@@ -72,4 +76,5 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - PR description re-read against the code after every push (defaults for missing fields, test counts, release order)? It says where a new rule is not enforced and lists manual steps before the production release (third-party config with exact values)?
 - Every review thread answered; "done" only for pushed code ("in the next push" otherwise)?
 - When two reviewers disagree, the choice follows the more specific/newest convention, and both threads say what was done and why?
+- Shared functions only extended (an entry added to their list), not rewritten in this PR? Description short: one plain sentence, then 3–4 bullets?
 - Only the events and inputs the ticket needs? Code feeding data other teams rely on kept as is, with type gaps closed at the call site?

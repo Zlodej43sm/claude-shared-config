@@ -37,12 +37,13 @@ Writing rules:
 
 - **Simple English.** Short sentences, common words, active voice. One idea per bullet. No idioms, no filler ("This PR aims to…", "comprehensive", "robust", "seamlessly", "it's worth noting").
 - **Straight to the point.** Start with what changes for the user, the system or the data, and why it is needed. Don't recap the diff file by file; name a file or function only when the reviewer needs it.
-- **Short.** Aim for 10–25 lines of text, without SQL and checklists. Cut anything the reviewer can see in the diff in seconds.
+- **Short.** First line: one plain sentence of what the PR does, the one you would post in the team's review channel. Then at most 3–4 bullets a reviewer must know (new fields, new errors, a removed rule, why a side change is needed). About 10 lines without SQL and checklists. No rule-by-rule walkthrough, call flow or list of unchanged things: reviewers call that "an AI wall of text". Cut anything the reviewer can see in the diff in seconds.
 - **Why.** Give the reason when the context shows it: the ticket, a bug, a reviewer request, a limit of a third party.
-- **Say what does not change** when a reviewer may worry: contracts, other callers, behaviour.
+- **Say what does not change** only when a reviewer would otherwise worry (a breaking-looking contract change), in one line.
 - **Order and dependencies.** Which PR or migration must go first, in one or two lines. Same repo `#<n>`, other repo `owner/repo#<n>`.
 - **DB changes:** the SQL, whether it locks or rewrites a table, and whether it is breaking.
-- **Checklist:** tick only what is really there. Give the test counts from a real run.
+- **Checklist:** tick only what is really there; no sub-bullets, no local test counts (CI shows them). How to verify: one or two checks in a deployed environment.
+- **Only true lines:** nothing that is not on the branch yet (a pending version bump, a placeholder); add it when it lands.
 - **No Jira link** and no `[KEY]: https://…` reference lines. No secrets, tokens, customer data or full payloads.
 
 Before you finish, reread the body and delete every sentence that doesn't help the reviewer decide or test.
