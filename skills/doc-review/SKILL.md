@@ -7,7 +7,7 @@ description: Review or write technical documents - architecture docs, design doc
 
 Generic and reusable: no company or project data lives here. Rules come from:
 1. This skill: §A–§I below.
-2. The project's docs conventions: follow the root `CLAUDE.md` / `AGENTS.md` (workspace and repo) to its docs layout, glossary (`CONTEXT.md` or similar), writing-style and review docs. Project rules win over this skill.
+2. The project's docs conventions: follow the root `CLAUDE.md` / `AGENTS.md` (workspace and repo) to its docs layout, glossary (`CONTEXT.md` or similar), writing-style and review docs. That includes any reviewer profiles or review-lessons docs: review with those reviewers' questions. Project rules win over this skill.
 
 A finding cites the rule it breaks (`doc-review §X`, or the project doc path + section).
 
@@ -39,7 +39,7 @@ When **writing** or editing a doc, or fixing review comments on one, run `refere
 - A section that is long but says little is a should-fix: propose the shorter version.
 
 **§D Claims are true.**
-- Check every concrete claim against the source: names (topics, routes, env vars, tables, fields, classes), versions, defaults, status codes, "X already does Y", "no service needs to change". Read the sibling repos when available (compare the local checkout with its upstream first); cite `repo/path:line`.
+- Check every concrete claim against the source: names (topics, routes, env vars, tables, fields, classes), versions, defaults, status codes, "X already does Y", "no service needs to change". Arrow labels and payloads in diagrams are claims too, also in a diagram next to the change that the change does not touch. Read the sibling repos when available (compare the local checkout with its upstream first); cite `repo/path:line`.
 - The truth is the owning repo's **default branch** (fetch first), not an open PR, a feature branch, a plan doc or a ticket. A durable doc that describes unmerged behaviour (yours or a sibling's) is a finding: that text lands with the code change, or after it merges.
 - A behaviour you cannot find in any code is a finding phrased as "where is this implemented?", never assumed true. Plan docs and tickets are not evidence.
 - Use full, real names (full route paths, real env var names), not shorthand.
@@ -66,10 +66,12 @@ Missing answers are findings; phrase them as the question a reviewer would ask.
 **§H One home, right altitude.**
 - Each rule lives in one canonical section. Other docs link to it instead of restating it: two copies drift and end up contradicting each other. A rule repeated inside one doc (e.g. once per mode) is stated once.
 - An architecture or contract doc states the rules and contracts that callers and operators depend on. Implementation detail (TTL and timeout values, log event names, internal keys, storage paths, function names) stays in the code or the owning repo's docs.
+- A value derived from config or code next to it (a time budget computed from probe fields, a count of files) is not written out: state the rule once and link to it. The number goes stale when an input changes.
 - A glossary entry is one short sentence of meaning, with no mechanism. Keep it within the project's length cap if it has one.
 
 **§I The change agrees with itself.**
 - Docs, code comments, test names and comments, e2e assertions, config defaults and READMEs in the same change say the same thing. A contradiction is a finding in each place.
+- A new actor, state or failure the change adds (a second kind of owner, a new status, a delete that orphans rows) is checked against the whole doc and its diagram sources, not only the changed lines. Every rule, table, foreign key and list of exceptions that assumes the old set includes it or says why not.
 - A config default the change turns on matches the rollout order the docs state. If it depends on an unmerged change in another repo, the merge order is written down (PR description, README).
 - A test that claims to prove a documented rule fails when the rule breaks. It must not pass because the state is already terminal, a wait returns at once, or the good and bad outcomes look the same.
 

@@ -41,11 +41,18 @@ A test exists only if it proves a behaviour that **no other test proves** and th
 - Assertions check the observable outcome of that behaviour; don't re-assert what a sibling test already asserts.
 - Mocked collaborator responses carry realistic values (what the collaborator really returns), not empty placeholders.
 - When one entry point handles several event types, each type gets its own test, so the test list shows which events it answers.
+- **Paths a stub can't prove get one check on the real artifact.** When a behaviour depends on the real runtime (signal delivery through the init process, the real migration or build tool, a real lock or timeout, the files in the built image), the lowest level that can prove it is the real artifact. Walk the ticket's acceptance criteria and every path of the code (success, failure, disabled by flag, stopped mid-run, contended, restarted): each gets one automated check there, or the PR says why not. A stubbed unit test, a manual run or a doc paragraph is not that proof.
+- **Force rare paths deterministically:** hold the lock, inject the failing input or bad URL, stop at a known point. Don't rely on timing or data size to reach a timeout or a race.
+- **Every wait has a deadline and slack:** each poll or `until` loop in a test or CI script gives up after a bounded time with a message naming what it waited for; a forced timeout leaves seconds of margin (hold a lock well past the timeout), not a near race.
+- **Overlapping conditions:** where two events can overlap (a stop signal and a failure, a timeout and a retry), state the expected outcome (exit code, final state) and test it.
+- **Sibling instances get the same assertions:** a check made on one instance (exit code after stop, state after restart) is made on the others in the same test.
+- **A guard check runs today and is tight:** a test that enforces a repo rule (file shape, naming, migration format) does not skip until matching files exist. Put the check in a function and test it on sample inputs: one that passes, one that fails, and the edge a loose pattern gets wrong (the keyword in a comment, on the wrong line). Anchor the pattern where the rule says (first and last statement).
 - Time-dependent logic runs on a fixed clock (fake timers restored after each test, or the project's fixed-clock test step), never on the real date, so the test does not change result when the calendar passes the boundary.
 
 ## Step 4 — clean up what you touch
 - In files you change, delete or merge tests that duplicate each other or test library guarantees; say so in the PR (the "Tests" line: added / removed / why).
 - Don't add a test only to raise coverage; coverage follows unique behaviours.
+- Tests remove what they create (temp dirs and files, containers, networks, rows) in `afterEach` / `after-script`, also when they fail.
 - In a file you changed substantively, remove pre-existing tests of library guarantees too. In a file you touched only for fixtures or mocks, leave them and list them in the PR (or a ticket) for a follow-up, so the PR stays on topic.
 
 ## Step 5 — self-check before finishing
