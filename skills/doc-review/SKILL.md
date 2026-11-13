@@ -39,7 +39,7 @@ When **writing** or editing a doc, or fixing review comments on one, run `refere
 - A section that is long but says little is a should-fix: propose the shorter version.
 
 **§D Claims are true.**
-- Check every concrete claim against the source: names (topics, routes, env vars, tables, fields, classes), versions, defaults, status codes, "X already does Y", "no service needs to change". Read the sibling repos when available (compare the local checkout with its upstream first); cite `repo/path:line`.
+- Check every concrete claim against the source: names (topics, routes, env vars, tables, fields, classes), versions, defaults, status codes, "X already does Y", "no service needs to change". Arrow labels and payloads in diagrams are claims too, also in a diagram next to the change that the change does not touch. Read the sibling repos when available (compare the local checkout with its upstream first); cite `repo/path:line`.
 - The truth is the owning repo's **default branch** (fetch first), not an open PR, a feature branch, a plan doc or a ticket. A durable doc that describes unmerged behaviour (yours or a sibling's) is a finding: that text lands with the code change, or after it merges.
 - A behaviour you cannot find in any code is a finding phrased as "where is this implemented?", never assumed true. Plan docs and tickets are not evidence.
 - Use full, real names (full route paths, real env var names), not shorthand.
@@ -71,6 +71,7 @@ Missing answers are findings; phrase them as the question a reviewer would ask.
 
 **§I The change agrees with itself.**
 - Docs, code comments, test names and comments, e2e assertions, config defaults and READMEs in the same change say the same thing. A contradiction is a finding in each place.
+- A new actor, state or failure the change adds (a second kind of owner, a new status, a delete that orphans rows) is checked against the whole doc and its diagram sources, not only the changed lines. Every rule, table, foreign key and list of exceptions that assumes the old set includes it or says why not.
 - A config default the change turns on matches the rollout order the docs state. If it depends on an unmerged change in another repo, the merge order is written down (PR description, README).
 - A test that claims to prove a documented rule fails when the rule breaks. It must not pass because the state is already terminal, a wait returns at once, or the good and bad outcomes look the same.
 
