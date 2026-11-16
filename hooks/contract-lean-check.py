@@ -10,6 +10,7 @@ Checked on added lines only:
 - a `type` / `interface` declared in `models/` or `helpers/` outside `types.ts`;
 - a helper, provider or client importing a method contract (`…/dist/methods/…`): a
   contract change would ripple into it, so it declares the fields it reads itself;
+- an `it.each` / `test.each` over a named list declared above it (the cases belong inline);
 - an upper-case constant declared at the top of a file that is not a constants file
   (constants live in the layer's `constants.ts`);
 - a new `.feature` scenario title that names an input detail (a different case,
@@ -67,6 +68,7 @@ def branch_base(repo):
 
 CONTRACT_IMPORT = re.compile(r"""from\s+['"][^'"]*/dist/methods/""")
 CONTRACT_OWNERS = re.compile(r"(^|/)(helpers|providers|clients)/")
+TEST_EACH_NAMED = re.compile(r"\b(it|test|describe)\.each\(\s*[A-Za-z_]\w*\s*\)")
 TOP_LEVEL_CONSTANT = re.compile(r"^(export\s+)?const\s+[A-Z][A-Z0-9_]{2,}\b")
 SCENARIO_TITLE = re.compile(r"^\s*Scenario( Outline)?:")
 TITLE_DETAIL = re.compile(
@@ -83,9 +85,13 @@ def findings_from_diff(diff):
         if line.startswith("+++ b/"):
             path = line[6:]
             continue
-        if not line.startswith("+") or line.startswith("+++") or "__tests__" in path:
+        if not line.startswith("+") or line.startswith("+++"):
             continue
         text = line[1:]
+        if "__tests__" in path:
+            if path.endswith(".test.ts") and TEST_EACH_NAMED.search(text):
+                findings.append(f"{path}: it.each over a named list; inline the cases — {text.strip()[:80]}")
+            continue
         if path.endswith(".feature"):
             if SCENARIO_TITLE.match(text) and TITLE_DETAIL.search(text):
                 findings.append(f"{path}: scenario title names an input detail or a caller's window — {text.strip()[:80]}")

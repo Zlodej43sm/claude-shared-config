@@ -130,6 +130,7 @@ For **each** comment, read the code it points at (locate by identifier, not just
 
 Rules:
 
+- **`Fixed:` means the reviewer's intent is met in pushed code.** When the intent needs a later release or another PR (making a field mandatory after its caller ships), the verdict is `Deferred:`, naming the release order and the follow-up; never `Fixed:` or "done". Reviewers re-read the thread and reopen it.
 - **Verify claims, do not trust them.** Reviewer comments, including automated or AI-assisted ones (`[bot]`, `[claude]` prefixes), can be wrong, stale or about a different commit. Check each factual claim (line counts, "no caller", "origin accepts X") against the code or the referenced source. A claim that is false gets a reply that says so with the evidence.
 - **Cross-repo references:** open the sibling checkout read-only (`../<repo>`) and cite file and line. Never edit another repository; a needed change there is a `Deferred:` with the repo and what to change, and goes into the final report for the user.
 - **Push back only with evidence** (file:line, a test, a doc, origin source), never on preference or effort. "Too big for this PR" is acceptable only for a change that is separable and the reply names where it goes.
