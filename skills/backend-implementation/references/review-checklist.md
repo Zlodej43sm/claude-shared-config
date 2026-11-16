@@ -15,7 +15,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 ## 2. Contracts and API design
 - Request and response schemas built from the entity schema; cross-entity fields reuse the owning entity's field schema?
 - Breaking or stricter change (partial → full, optional → required, removed/renamed field) identified, every caller checked, release order stated? "Caller sends every field" verified by compiling each caller against the new types (a field covered only by a schema default still breaks the caller's types when request types are the schema's output)? The caller compiled against the published package version, not a local build of the provider's branch (the base may have moved and changed transitive pins)?
-- A field the caller doesn't send yet: optional now, release order (service → caller → confirm no other caller omits it → required) in the PR, follow-up ticket linked?
+- A field the caller doesn't send yet: optional now, release order (service → caller → confirm no other caller omits it → required, in the next release of the same types version) in the PR, follow-up ticket linked? `.nullish()` kept only for a value a caller can lack?
 - No strict validation against another service's enum unless the pins stay aligned (checking one value → compare a string)?
 - Edge cases (empty input, not found, duplicates) behave like the sibling methods? A sibling that reads the same entity checks a flag or end date (`isActive`, `validTo`) this path skips: same rule applied, or the difference stated, or the question asked?
 - Response field and description named after the operation, in the project's form, else the SKILL.md §10 default (`upserted<Entities>`, `Returns the upserted <entities>`)?
@@ -40,7 +40,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - Schema library used only at the input boundary, with the third party's required fields from its documented model? No defensive check for a state the source's contract forbids?
 
 ## 4. Tests (see the `test-design` skill)
-- Each test proves one unique behaviour at the lowest level; no duplicates, no implied tests, no schema-library tests at any entry point (methods, API and webhook routes with an invalid payload → 400, consumers)?
+- Each test proves one unique behaviour at the lowest level; no duplicates, no implied tests, no schema-library tests at any entry point (methods, API and webhook routes with an invalid payload → 400, consumers), none of a shared schema's transform (trim, lower-case)?
 - Failure tests assert the reason (error code/message/fields) and nothing unrelated?
 - Model-only logic proven by unit tests; functional fixtures clean? Unit tests mock the providers, not a sibling model, and assert results, not the order of `mockResolvedValueOnce` calls?
 - No test of a downstream service's validation or of generated API docs? Mocked collaborator responses carry realistic values? One scenario per event type the endpoint handles?
@@ -48,7 +48,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 
 ## 5. Naming
 - Each new or renamed test and scenario title copies the form of the titles already in its file (then sibling files, then the repo's most common form)? `Should …` / `should …` only where there is nothing to copy (test-design Step 3).
-- Scenario titles name the condition as the caller sees it and the asserted fields, "stored" not "existing"?
+- Scenario titles name the condition as the caller sees it and the asserted fields, "stored" not "existing"; the actors in the contract's words, one rule per title (an allowed scenario every condition it proves), no input detail or caller choice, params matching the title?
 - Unit test titles name the exact outcome and the collaborator, no "fail"/"wrap"/"handle"?
 - Function names state everything the function does; provider/model/handler names follow the project's forms?
 - Error/reason codes subject first like their enum's other values (`<SUBJECT>_HAS_<STATE>`)? Test case labels use the field's words?
@@ -63,14 +63,16 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - Every extracted function or file reused, test-worthy or a named domain conversion (otherwise inlined)? Shared constants and error classes generic, not per route or per flow? No magic literals in conditions; lists and types derived from one `as const` dictionary?
 - Lookup maps built only from the rows they are read with, not from merged result sets?
 - A rule a sibling module already implements (expiry, eligibility window) moved to one shared helper in `helpers/` with its own test, not copied; a helper used from one place inlined?
-- No new type alias where the contract type works (`<Method>Request & { … }`); a needed type in the project's types file, not at the top of a model or helper? No helper for a primitive comparison; counts checked by truthiness?
+- A helper, provider or client imports no method contract type (`<Method>Request`): it declares the fields it reads inline, all mandatory, and the model does the missing-value checks? A needed type in the project's types file, not at the top of a model or helper? No helper for a primitive comparison; counts checked by truthiness?
 - Exported list constants typed `readonly T[]` and copied into responses? Constant names state what the set holds (`COUNTRIES_WITHOUT_<FEATURE>`)?
+- No lookup table between enums whose values match (pass through, handle the exception, one test over the source enum)? In a composite: assertions decide, reads in queries, pure conversions in util, constants in the constants file, request and response types from the types package?
 
 ## 7. Errors and logging (details: `logging.md`)
 - Project error classes with `cause`; static messages; one log per failure?
 - The logger's error key actually serialises the error (stack, cause)? If the lint rule and the logger disagree, follow lint and raise it centrally?
 - No secrets or personal data in new log lines?
 - One error path unless the caller needs two? A test-only side effect (CI trigger) never changes the response? Existing log lines kept; new ones log only the needed fields (no whole objects or payloads), and none duplicates a log the framework writes?
+- A renamed or flattened personal-data field masked in the request and outgoing log transforms (the platform default compares exact lowercase names), with a test?
 
 ## 8. PR and review process
 - PR description re-read against the code after every push (defaults for missing fields, test counts, release order)? It says where a new rule is not enforced and lists manual steps before the production release (third-party config with exact values)?

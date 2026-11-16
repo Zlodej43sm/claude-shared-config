@@ -17,7 +17,7 @@ A test exists only if it proves a behaviour that **no other test proves** and th
 3. For each new behaviour, check the map. Add a test only for a triple that is missing.
 
 ## Step 2 — what not to test
-- **Library, framework, language and tool guarantees:** schema/type validation (types, required fields, enums, formats, integer checks) at any entry point — service methods, API and webhook routes (an invalid payload only to get the framework's 400), message consumers, job arguments — ORM or query-builder mechanics, framework routing or serialisation, cloud/provider APIs, container or orchestrator schemas, template syntax, what the compiler, type checker, linter, formatter, `validate`/`plan` step or CI policy check already enforces.
+- **Library, framework, language and tool guarantees:** schema/type validation (types, required fields, enums, formats, integer checks) at any entry point — service methods, API and webhook routes (an invalid payload only to get the framework's 400), message consumers, job arguments — a shared schema's transform that runs before your code (trim, lower-case, defaults), ORM or query-builder mechanics, framework routing or serialisation, cloud/provider APIs, container or orchestrator schemas, template syntax, what the compiler, type checker, linter, formatter, `validate`/`plan` step or CI policy check already enforces.
 - **Implied behaviour:** a case that a combination of existing tests already proves (A proves "link new", B proves "move existing" ⇒ "link existing" is covered).
 - **The same behaviour at two levels:** prove it once, at the **lowest level that can prove it**:
   - pure logic, branching, mapping, normalisation, de-duplication, sorting → unit;
@@ -26,6 +26,7 @@ A test exists only if it proves a behaviour that **no other test proves** and th
   - only critical user journeys → end-to-end;
   - infrastructure: configuration rules → static/policy checks; behaviour of a deployed resource → one smoke check per deploy path.
   A higher-level test is justified only when it adds something the lower one can't (a real database, real wiring, the real contract) — and then it asserts that addition, not the lower-level logic again.
+- **Rules a test double copies:** a rule the real store or library enforces (a status filter in the query, a unique constraint, authentication of encrypted data) is proven against the real thing. A test on top of an in-memory fake proves only that the caller maps the outcome: one case per outcome, not one per input the rule distinguishes — varying those inputs there tests the fake.
 - **Copies with different data:** variants of the same behaviour are one parameterised test (table/each/outline), not N copies.
 - **Implementation details:** private helpers already exercised through their caller's tests, call order that isn't part of the contract, log lines, snapshot dumps of large objects.
 - **Other components' rules:** another service's input validation (mock its error only if your code reacts to it in a specific way), the validity of generated API documentation (the tooling owns it).
@@ -36,7 +37,10 @@ A test exists only if it proves a behaviour that **no other test proves** and th
   - A new file copies its sibling files (same folder, then same module), then the form most of the repo uses (tally the first word of the existing titles).
   - Only when there is nothing to copy does the default apply: the project's naming doc, else `should <outcome> [when <condition>]` (`Should …` in scenario titles).
   - The file's form wins over the project's default form, and the default never justifies renaming untouched tests (a drive-by change). A test whose assertion you change keeps the file's form.
+- **A title states the rule in the contract's words:** actors named as the request fields name them, one rule per title (an allowed case lists every condition it proves), no input detail (case, whitespace, format) and no choice the caller makes (a period, a status). The test's params match its title.
 - Fixtures are minimal and clean: only the data the behaviour needs, already in normalised form unless normalisation is the behaviour.
+- **One builder per fixture type:** tests build a record through one shared factory with overrides (`<entity>Record({ status })`), so a new field is one change; a test that needs extra fields spreads them on top.
+- **A negative test uses an input only your rule rejects.** An input every implementation refuses (an all-zero authentication tag, data that fails for every key, a value invalid in two ways) still fails when your rule is gone. Build the input that would be accepted without the rule (the real tag cut short, a value encrypted fresh and read with another id), and remove the rule once to see the row fail.
 - A failure test asserts **why** it failed (error type/code/message or the invalid fields), not just "failed"; no unrelated side-effect checks after it.
 - Assertions check the observable outcome of that behaviour; don't re-assert what a sibling test already asserts.
 - Mocked collaborator responses carry realistic values (what the collaborator really returns), not empty placeholders.

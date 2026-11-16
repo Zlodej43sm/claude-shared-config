@@ -17,6 +17,8 @@ Your prompt contains:
 - A `JIRA CONTEXT` block (between `=== JIRA CONTEXT: <key> ===` and `=== END JIRA CONTEXT ===`).
 - `plan_dir` — the directory where the plan file should be saved (e.g. `.claude/plans`).
 - `project_root` — absolute path to the primary project.
+- `target_repos` — the repos the ticket changes.
+- `planning_standard` — absolute path of the project's roadmap or plan standard, or `none`.
 
 ## Step 1 — Parse the context block
 
@@ -28,6 +30,8 @@ Extract and internalize:
 4. **Project stack + layer contracts** — from Primary Repo CLAUDE.md: language, framework, test runner, import-linter rules, layer definitions.
 
 ## Step 2 — Explore the codebase
+
+**Project standard.** When `planning_standard` is not `none`, read it before anything else, then the standards and review-lesson docs it names for the layers you touch. Carry them into the plan: the rules that apply under "Existing patterns to follow" and "Risks", and its pre-push checks (commands and hooks) under "QA commands".
 
 **First**, extract from the CLAUDE.md in the context block:
 - Source root path (e.g. `src/`, `lib/`, `pkg/`, `app/`)
@@ -168,6 +172,8 @@ Source: <path of the project's DB checklist / conventions doc, or "none found: g
 | Lint | `<LINT_CMD>` |
 | Test | `<TEST_CMD>` |
 | Build | `<BUILD_CMD>` |
+
+When `planning_standard` is given, add its pre-push checks to this table (for example a complexity check or a contract-lean hook) so the implementer runs them before every push.
 
 ### Files to create
 | File | Purpose |

@@ -7,7 +7,13 @@ Checked on added lines only:
 - a Zod `.describe(` (field descriptions: the name should say it);
 - a `.refine(` / `.superRefine(` (keep contracts lean);
 - a `description` line in a method config (`methods/<name>/config.ts`);
-- a `type` / `interface` declared in `models/` or `helpers/` outside `types.ts`.
+- a `type` / `interface` declared in `models/` or `helpers/` outside `types.ts`;
+- a helper, provider or client importing a method contract (`…/dist/methods/…`): a
+  contract change would ripple into it, so it declares the fields it reads itself;
+- an upper-case constant declared at the top of a file that is not a constants file
+  (constants live in the layer's `constants.ts`);
+- a new `.feature` scenario title that names an input detail (a different case,
+  whitespace) or a caller's lookback window: titles state the rule.
 
 Commit: the staged files against the merge base with the remote default
 branch, so a line put back as it was on the base is not flagged. Push: the
@@ -59,6 +65,17 @@ def branch_base(repo):
     return ""
 
 
+CONTRACT_IMPORT = re.compile(r"""from\s+['"][^'"]*/dist/methods/""")
+CONTRACT_OWNERS = re.compile(r"(^|/)(helpers|providers|clients)/")
+TOP_LEVEL_CONSTANT = re.compile(r"^(export\s+)?const\s+[A-Z][A-Z0-9_]{2,}\b")
+SCENARIO_TITLE = re.compile(r"^\s*Scenario( Outline)?:")
+TITLE_DETAIL = re.compile(
+    r"\b(different|upper|lower|mixed)[- ]?case\b|\bcase[- ]insensitive|"
+    r"\b(trailing|leading) (space|whitespace)|\bwhitespace\b|\blookback\b",
+    re.IGNORECASE,
+)
+
+
 def findings_from_diff(diff):
     findings = []
     path = ""
@@ -69,8 +86,16 @@ def findings_from_diff(diff):
         if not line.startswith("+") or line.startswith("+++") or "__tests__" in path:
             continue
         text = line[1:]
+        if path.endswith(".feature"):
+            if SCENARIO_TITLE.match(text) and TITLE_DETAIL.search(text):
+                findings.append(f"{path}: scenario title names an input detail or a caller's window — {text.strip()[:80]}")
+            continue
         if not path.endswith((".ts", ".js")):
             continue
+        if TOP_LEVEL_CONSTANT.match(text) and not re.search(r"(^|/)constants(\.ts|/)", path):
+            findings.append(f"{path}: constant declared outside a constants file — {text.strip()[:80]}")
+        if CONTRACT_OWNERS.search(path) and CONTRACT_IMPORT.search(text):
+            findings.append(f"{path}: imports a method contract; declare the fields it reads inline — {text.strip()[:80]}")
         if ".describe(" in text:
             findings.append(f"{path}: new `.describe(` — {text.strip()[:80]}")
         if re.search(r"\.(super)?[Rr]efine\(", text):
