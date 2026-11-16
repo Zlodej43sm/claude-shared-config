@@ -62,6 +62,21 @@
     "notion-oauth": {
       "type": "http",
       "url": "https://mcp.notion.com/mcp"
+    },
+    "figma": {
+      "type": "http",
+      "url": "https://mcp.figma.com/mcp"
+    },
+    "playwright": {
+      "command": "python3",
+      "args": [
+        ".claude/tools/mcp-run.py",
+        "--",
+        "npx", "-y", "--before=2026-11-09T00:00:00Z", "@playwright/mcp@0.0.84",
+        "--headless", "--isolated",
+        "--viewport-size", "1440x900",
+        "--output-dir", ".claude/design/.playwright"
+      ]
     }
   }
 }

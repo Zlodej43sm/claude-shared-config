@@ -4,7 +4,8 @@ Shared, version-controlled Claude Code setup — skills, subagents, and MCP serv
 config, linked into every project instead of copy-pasted per repo. Includes
 ready-made skills for Jira/Confluence/Notion context-gathering, Bitbucket/GitHub
 connection setup, PR review and comment-answering, SonarQube triage, PR-splitting, plan-first
-feature implementation, evidence-based repository/service overviews, and
+feature implementation, design-to-code (Figma, screenshots or live sites → per-block specs →
+pixel-diffed UI), evidence-based repository/service overviews, and
 security auditing of application code and of this shared config tree itself.
 
 ## Quick start
@@ -123,6 +124,32 @@ server), then:
 
 **Not using Notion in a project:** `NOTION_MCP=off` in `.claude/.env`.
 
+### Design to code (Figma, screenshots, live sites)
+
+The design servers are off by default. Turn them on in a front-end project:
+
+```
+# .claude/.env
+DESIGN_MCP=on
+```
+
+Start Claude Code, restart it once (the first start enables `figma` and `playwright`), then:
+
+```
+/mcp                      -> figma  (shows "needs authentication")
+                             choose Authenticate -> allow access in the browser -> done
+/design-spec https://www.figma.com/design/<fileKey>/Home?node-id=12-34
+                          -> .claude/design/home/: design.md, tokens.json, assets/,
+                             blocks/01-header/{spec.md,reference.png}, blocks/02-hero/…
+/design-spec https://example.com --block=footer      -> one block of a live page
+/design-spec ~/Desktop/checkout.png                  -> blocks measured from a screenshot
+/design-build .claude/design/home                    -> plan, then code block by block,
+                                                        each diffed against reference.png
+```
+
+Figma's read tools are rate-limited per seat and plan; `design-spec` counts the calls it
+needs and asks first when the budget is tight.
+
 ### Troubleshooting at a glance
 
 | Symptom | Cause / fix |
@@ -134,6 +161,7 @@ server), then:
 | `github` fails: `GITHUB_TOKEN is not set` | No token in `.env` and no `gh` session: run `gh auth login` (or set `GITHUB_TOKEN`), restart |
 | `notion-oauth` says "needs authentication" | Expected until you sign in: `/mcp` → `notion-oauth` → Authenticate (browser window) |
 | Neither Notion server listed | `NOTION_MCP=off` is set in `.claude/.env` |
+| `figma` / `playwright` not listed in `/mcp` | Off unless `DESIGN_MCP=on` is in `.claude/.env`; set it, then start a session and restart once. Still missing: the project's `.mcp.json` predates them; copy the two entries from `mcp.json.template` |
 | Notion 404 for a page you can open in the browser, even after re-authenticating | `notion-oauth` is signed into another workspace (a personal one can have the same name). `/get-notion-page --check` prints the workspace id; `/mcp` → `notion-oauth` → Authenticate and pick the right workspace in the consent screen's switcher; then set `NOTION_WORKSPACE_ID` in `.claude/.env` |
 | `github` fails on first start | The Docker image is being pulled — wait and restart. Docker must be running |
 | Server not found / `.mcp.json` has no `github` | The project's `.mcp.json` is an old copy; delete it and re-run `bin/link-project.sh <project>` |
@@ -157,6 +185,7 @@ server), then:
   | --- | --- | --- |
   | Jira / Confluence | `atlassian` (`JIRA_EMAIL` + `JIRA_API_TOKEN`) | `atlassian-oauth` — hosted `mcp.atlassian.com`, sign in once from `/mcp` |
   | Notion | `notion` (`NOTION_TOKEN`) | `notion-oauth` — hosted `mcp.notion.com`, sign in once from `/mcp` |
+  | Figma | — | `figma` — hosted `mcp.figma.com`, sign in once from `/mcp` |
   | GitHub | `github` (`GITHUB_TOKEN`) | `github` with the token of your `gh auth login` browser session |
   | SonarQube | `sonarqube` (`SONAR_API_TOKEN`) | — |
 
@@ -170,6 +199,8 @@ server), then:
   dependencies as of a fixed date (`--exclude-newer` / `--before`), so a dependency published
   later never gets in; move the date together with the version. The `notion` and `sonarqube`
   servers can do whatever their token allows; `env.example` says how to limit each token.
+  `playwright` (a headless browser for the design skills) needs no credentials; it runs
+  with an in-memory profile (`--isolated`), so no cookies or logins persist between sessions.
 
   Nothing in the template is project-specific and nothing is generated from a project: each
   stdio server is launched through `tools/mcp-run.py`, which reads the project's `.claude/.env`
@@ -188,7 +219,8 @@ server), then:
   the template's servers (`enabledMcpjsonServers`) and disables the ones the project doesn't
   use (`disabledMcpjsonServers`, in the project's `settings.local.json`): the key-based
   server when its credentials are usable, otherwise the hosted one (`atlassian`/`atlassian-oauth`,
-  `notion`/`notion-oauth`; `NOTION_MCP=off` disables both Notion servers); `github` only when
+  `notion`/`notion-oauth`; `NOTION_MCP=off` disables both Notion servers); `figma` and
+  `playwright` only with `DESIGN_MCP=on`; `github` only when
   the git host is GitHub (same detection as the PR tools: `GIT_HOST`, then the `origin` URL,
   then `GITHUB_OWNER`) — Bitbucket has no MCP server, the PR skills use `tools/bb_*.sh`. For
   GitHub it also fills a missing `GITHUB_OWNER`/`GITHUB_REPO` from the origin remote and a
@@ -276,6 +308,8 @@ Invoked as `/<skill-name>` (or by the natural-language triggers noted below), un
 | `caveman` | Token-efficient caveman-mode responses (~75% fewer tokens, full technical accuracy). | `/caveman`, or saying "less tokens" / "be brief"; stays active until "stop caveman" / "normal mode" |
 | `connect-git` | Verifies the project's git-hosting connection: resolves Bitbucket vs GitHub, checks the credentials in `.claude/.env`, tests them against the host API, and confirms the matching MCP server (GitHub) is in `.mcp.json` and answers a live read-only call; reports Notion status. Read-only. | `/connect-git`; first-time setup, after switching remotes, or when PR skills return 401/403/404 |
 | `create-jira-task` | Creates one or more Jira issues (default type Task), optionally as children of a parent issue such as an Epic. A real **write** operation against Jira Cloud. | `/create-jira-task [--parent=KEY] [--project=KEY] [--issuetype=NAME] [--dry-run]` |
+| `design-build` | Builds UI from a `design-spec` directory one block at a time. Detects the stack (as `frontend-review` does), maps the spec's tokens to the project's, reuses its components, and aligns a block that already exists instead of rebuilding it. Plans first and waits for approval. Then for each block it writes the code, renders it through the `playwright` server at every spec viewport, and diffs it against `reference.png` (`tools/design_png.py diff`), fixing mismatches until the diff passes or the rounds run out. New tokens, fonts, dependencies and third-party assets each need a yes. | `/design-build <spec-dir> [--block=<name>]... [--preview=<url>] [--threshold=<percent>] [--max-rounds=<n>]` |
+| `design-spec` | Turns a design into per-block specs for `design-build`. A Figma link is fetched through the `figma` server. A live page or local HTML file is rendered by the `playwright` server and read from computed styles (`references/dom-extract.js`). A screenshot is measured with `tools/design_png.py`. Splits the page into blocks (header, sections, footer) or takes only `--block`. Each block gets a structure tree with sizes, layout, type, colours, states and responsive changes, plus a 1x `reference.png`; tokens and assets are shared. Format: `references/spec-format.md`. Writes only under `.claude/design/`. | A Figma URL, design screenshot or site/block to copy; `/design-spec <figma-url \| image \| url \| html-file> [--block=<b>]... [--name=<slug>] [--viewports=<w>,<w>]` |
 | `doc-review` | Reviews (or self-checks before a PR) technical documents — architecture/design docs, plans, specs, ADRs, data contracts, runbooks, READMEs: durable docs hold only the target state (plans live elsewhere), flows and data models as diagrams and tables, plain wording without AI-style filler, every claim verified against the owning repo's default branch (no unmerged behaviour, no history or ticket keys), reader lifecycle questions (bootstrap, who may call, UI vs API, secret handoff) answered, design failure modes covered, fan-out to other canonical docs, one home per rule at the right level of detail, docs/comments/tests/config in the change agreeing. Writer self-check ranked by reviewer frequency: `references/self-check.md`. Read-only. Also applied by the `pr-reviewer` agent to the `docs` bucket, and run by `pr-description`, `answer-pr-comments --fix` and `backend-implementation` when a change touches docs. Grows from reviewer comments (generic rules only). | "review this doc/design PR", or alongside `/pr-review` on a docs PR; whenever you write or edit a doc; before opening or updating a PR that changes a doc |
 | `feature-doc` | Generates a plain-English feature doc from the current branch's Jira ticket and diff, readable by QA/PMs/tech leads without code knowledge. | `/feature-doc [ticket-key] [output-path]` |
 | `get-confluence-page` | Fetches a Confluence page by URL or ID and renders it as Markdown, following embedded links two levels deep. Atlassian MCP first, REST fallback (`tools/atlassian_fetch.py`) if the MCP server is down. | User provides a Confluence URL, or a Jira issue being read links to one |
@@ -307,7 +341,7 @@ Subagents invoked by the skills above — not called directly by name.
 
 ## What's NOT here (stays per-project, never write project values back into this repo)
 
-`.claude/.env`, `.claude/settings.local.json`, `.claude/plans/`,
+`.claude/.env`, `.claude/settings.local.json`, `.claude/plans/`, `.claude/design/`,
 `.claude/reviews/`, `.claude/worktrees/`, and any other session/runtime state
 are never templated here at all. `.claude/settings.json` and `.mcp.json` are
 copied *from* this repo once (see `settings.json.template` / `mcp.json.template`

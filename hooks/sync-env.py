@@ -52,6 +52,7 @@ JIRA_KEYS = (
     "JIRA_BASE_URL",
 )
 JIRA_CREDENTIAL_KEYS = ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")  # optional: else atlassian-oauth
+DESIGN_MCP_SERVERS = {"figma", "playwright"}  # on only with DESIGN_MCP=on
 ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
 # Secret-looking env var names: kept out of settings.local.json here and out of MCP child envs
 # by tools/mcp-run.py. Anchored parts avoid non-secrets such as SSH_AUTH_SOCK or TERM_SESSION_ID.
@@ -175,6 +176,9 @@ def unused_mcp_servers(host: str | None, env: dict[str, str]) -> set[str]:
       - github only when the git host is github (its token may come from `gh auth
         login`, see main()); Bitbucket has no MCP server — the PR skills use
         tools/bb_*.sh.
+      - figma and playwright (the design-spec / design-build servers) only with
+        DESIGN_MCP=on: most projects never use them, and playwright starts a
+        browser server at every session start.
     sonarqube stays on."""
     unused: set[str] = set()
     if host != "github":
@@ -184,6 +188,8 @@ def unused_mcp_servers(host: str | None, env: dict[str, str]) -> set[str]:
         unused |= {"notion", "notion-oauth"}
     else:
         unused.add("notion-oauth" if usable_secret(env.get("NOTION_TOKEN", "")) else "notion")
+    if env.get("DESIGN_MCP", "").strip().lower() != "on":
+        unused |= DESIGN_MCP_SERVERS
     return unused
 
 
