@@ -73,9 +73,11 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - The logger's error key actually serialises the error (stack, cause)? If the lint rule and the logger disagree, follow lint and raise it centrally?
 - No secrets or personal data in new log lines?
 - One error path unless the caller needs two? A test-only side effect (CI trigger) never changes the response? Existing log lines kept; new ones log only the needed fields (no whole objects or payloads), and none duplicates a log the framework writes?
+- Each rule written as named conditions (`hasSameEmail`), a bare literal default (`0`) a named constant, no test that repeats a conversion already proven in its own unit test?
 - A renamed or flattened personal-data field masked in the request and outgoing log transforms (the platform default compares exact lowercase names), with a test?
 
 ## 8. PR and review process
+- Before the review request: CI green, none of your own code comments left open? The PR text names what callers and operators will see (a new reason on an existing path, a logging change)?
 - PR description re-read against the code after every push (defaults for missing fields, test counts, release order)? It says where a new rule is not enforced and lists manual steps before the production release (third-party config with exact values)?
 - Every review thread answered; "done" only for pushed code ("in the next push" otherwise)?
 - When two reviewers disagree, the choice follows the more specific/newest convention, and both threads say what was done and why?

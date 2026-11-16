@@ -19,7 +19,7 @@ A test exists only if it proves a behaviour that **no other test proves** and th
 ## Step 2 — what not to test
 - **Library, framework, language and tool guarantees:** schema/type validation (types, required fields, enums, formats, integer checks) at any entry point — service methods, API and webhook routes (an invalid payload only to get the framework's 400), message consumers, job arguments — a shared schema's transform that runs before your code (trim, lower-case, defaults), ORM or query-builder mechanics, framework routing or serialisation, cloud/provider APIs, container or orchestrator schemas, template syntax, what the compiler, type checker, linter, formatter, `validate`/`plan` step or CI policy check already enforces.
 - **Implied behaviour:** a case that a combination of existing tests already proves (A proves "link new", B proves "move existing" ⇒ "link existing" is covered).
-- **The same behaviour at two levels:** prove it once, at the **lowest level that can prove it**:
+- **The same behaviour at two levels:** prove it once, at the **lowest level that can prove it** (a conversion with its own unit test is not asserted again in its caller's test):
   - pure logic, branching, mapping, normalisation, de-duplication, sorting → unit;
   - queries, persistence, concurrency conditions in the database, wiring between layers, real serialisation → integration/functional;
   - agreements between services → contract tests;
