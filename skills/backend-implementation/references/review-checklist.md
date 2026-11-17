@@ -15,8 +15,9 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 ## 2. Contracts and API design
 - Request and response schemas built from the entity schema; cross-entity fields reuse the owning entity's field schema?
 - Breaking or stricter change (partial → full, optional → required, removed/renamed field) identified, every caller checked, release order stated? "Caller sends every field" verified by compiling each caller against the new types (a field covered only by a schema default still breaks the caller's types when request types are the schema's output)? The caller compiled against the published package version, not a local build of the provider's branch (the base may have moved and changed transitive pins)?
+- Version bump stated with impact and risk (project's versioning doc)? New optional field, deprecation = minor; making a field mandatory once every caller sends it = minor; major only for a disruptive change.
 - A check moved from a caller to a service follows three releases (optional fields; the caller passes them on every path, internal call sites included, with no code-only first call; mandatory after)?
-- A field the caller doesn't send yet: optional now, release order (service → caller → confirm no other caller omits it → required, in the next release of the same types version) in the PR, follow-up ticket linked? `.nullish()` kept only for a value a caller can lack?
+- A field the caller doesn't send yet: optional now, release order (service → caller → confirm no other caller omits it → required in a follow-up release) in the PR, follow-up ticket linked? Services release one by one, so a mandatory field shipped first fails the caller in prod; each step must work with what is in prod and roll back alone. `.nullish()` kept only for a value a caller can lack?
 - No strict validation against another service's enum unless the pins stay aligned (checking one value → compare a string)?
 - Edge cases (empty input, not found, duplicates) behave like the sibling methods? A sibling that reads the same entity checks a flag or end date (`isActive`, `validTo`) this path skips: same rule applied, or the difference stated, or the question asked?
 - Response field and description named after the operation, in the project's form, else the SKILL.md §10 default (`upserted<Entities>`, `Returns the upserted <entities>`)?
@@ -60,13 +61,13 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 ## 6. Code organisation and readability
 - One job per function; pure helpers with their own tests where the project keeps them, else the SKILL.md §10 default (`helpers/`); trivial single-use logic inline?
 - No comments for intent or restating code; only DB/library quirks?
-- Touched types and signatures brought up to the standards; untouched code left alone; dead code from the change removed?
+- Touched types and signatures brought up to the standards; untouched code left alone; dead code from the change removed: for every removed or migrated call, each removed symbol grepped, and a class, repository or client left with no members deleted with its wiring, mocks and fixtures ("Can this file be removed?")?
 - Every extracted function or file reused, test-worthy or a named domain conversion (otherwise inlined)? Shared constants and error classes generic, not per route or per flow? No magic literals in conditions; lists and types derived from one `as const` dictionary?
 - Lookup maps built only from the rows they are read with, not from merged result sets?
 - A rule a sibling module already implements (expiry, eligibility window) moved to one shared helper in `helpers/` with its own test, not copied; a helper used from one place inlined?
 - A helper, provider or client imports no method contract type (`<Method>Request`): it declares the fields it reads inline, all mandatory, and the model does the missing-value checks? A needed type in the project's types file, not at the top of a model or helper? No helper for a primitive comparison; counts checked by truthiness?
 - Exported list constants typed `readonly T[]` and copied into responses? Constant names state what the set holds (`COUNTRIES_WITHOUT_<FEATURE>`)?
-- No lookup table between enums whose values match (pass through, handle the exception, one test over the source enum)? In a composite: assertions decide, reads in queries, pure conversions in util, constants in the constants file, request and response types from the types package?
+- No lookup table between enums whose values match (pass through, handle the exception, one test over the source enum)? In a composite: assertions decide and read through the repositories (a query only when shared or composing reads; "absent" errors → `null` in the repository), pure conversions in util, constants in the constants file, request and response types from the types package?
 
 ## 7. Errors and logging (details: `logging.md`)
 - Project error classes with `cause`; static messages; one log per failure?
@@ -78,6 +79,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 
 ## 8. PR and review process
 - Before the review request: CI green, none of your own code comments left open? The PR text names what callers and operators will see (a new reason on an existing path, a logging change)?
+- "CI will check it" backed by a check run on the head (a PR into a feature branch may run none)? A test waiting for a provider's unreleased change names it and the pin to replace?
 - PR description re-read against the code after every push (defaults for missing fields, test counts, release order)? It says where a new rule is not enforced and lists manual steps before the production release (third-party config with exact values)?
 - Every review thread answered; "done" only for pushed code ("in the next push" otherwise)?
 - When two reviewers disagree, the choice follows the more specific/newest convention, and both threads say what was done and why?

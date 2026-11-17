@@ -10,9 +10,11 @@ Checked on added lines only:
 - a `type` / `interface` declared in `models/` or `helpers/` outside `types.ts`;
 - a helper, provider or client importing a method contract (`…/dist/methods/…`): a
   contract change would ripple into it, so it declares the fields it reads itself;
+- a class declared with an empty body (what a migration leaves behind: delete it with its wiring);
 - an `it.each` / `test.each` over a named list declared above it (the cases belong inline);
 - an upper-case constant declared at the top of a file that is not a constants file
   (constants live in the layer's `constants.ts`);
+- a new `.feature` step that asserts a schema validation error (`… -> <field> Required`);
 - a new `.feature` scenario title that names an input detail (a different case,
   whitespace) or a caller's lookback window: titles state the rule.
 
@@ -70,7 +72,9 @@ CONTRACT_IMPORT = re.compile(r"""from\s+['"][^'"]*/dist/methods/""")
 CONTRACT_OWNERS = re.compile(r"(^|/)(helpers|providers|clients)/")
 TEST_EACH_NAMED = re.compile(r"\b(it|test|describe)\.each\(\s*[A-Za-z_]\w*\s*\)")
 TOP_LEVEL_CONSTANT = re.compile(r"^(export\s+)?const\s+[A-Z][A-Z0-9_]{2,}\b")
+EMPTY_CLASS = re.compile(r"^\s*(export\s+)?(default\s+)?class\s+\w+[^{]*\{\s*\}\s*;?\s*$")
 SCENARIO_TITLE = re.compile(r"^\s*Scenario( Outline)?:")
+SCHEMA_ERROR_STEP = re.compile(r"error message:\s*\".*->\s*\w+\s+(Required|Invalid\b[^\"]*)\"")
 TITLE_DETAIL = re.compile(
     r"\b(different|upper|lower|mixed)[- ]?case\b|\bcase[- ]insensitive|"
     r"\b(trailing|leading) (space|whitespace)|\bwhitespace\b|\blookback\b",
@@ -95,6 +99,8 @@ def findings_from_diff(diff):
         if path.endswith(".feature"):
             if SCENARIO_TITLE.match(text) and TITLE_DETAIL.search(text):
                 findings.append(f"{path}: scenario title names an input detail or a caller's window — {text.strip()[:80]}")
+            if SCHEMA_ERROR_STEP.search(text):
+                findings.append(f"{path}: scenario asserts a schema validation error; the schema library already guarantees it — {text.strip()[:80]}")
             continue
         if not path.endswith((".ts", ".js")):
             continue
@@ -102,6 +108,8 @@ def findings_from_diff(diff):
             findings.append(f"{path}: constant declared outside a constants file — {text.strip()[:80]}")
         if CONTRACT_OWNERS.search(path) and CONTRACT_IMPORT.search(text):
             findings.append(f"{path}: imports a method contract; declare the fields it reads inline — {text.strip()[:80]}")
+        if EMPTY_CLASS.match(text):
+            findings.append(f"{path}: class with an empty body; if a migration left it, delete it with its wiring and mocks — {text.strip()[:80]}")
         if ".describe(" in text:
             findings.append(f"{path}: new `.describe(` — {text.strip()[:80]}")
         if re.search(r"\.(super)?[Rr]efine\(", text):
