@@ -32,6 +32,8 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 - A constraint only stated in a comment (allowed characters, ordering, "set once") is either enforced by a check or answered in the PR with why it can't be?
 - User-facing sentences one translation key each (ICU `select`/`plural`), dates shown in the owning entity's time zone?
 
+- Handler, assertion and model use the contract's request and response types, with no local type of the same shape? A shape shared by the contract and code is one entity schema, named by its domain, not two copies? A moved type updates every consumer in the change, even outside the diff?
+
 ## 3. Data validity and consistency
 - Business value ranges encoded in the schema (positive amounts, non-empty names, max lengths)? A deleted model check moved into the schema?
 - Ordering keys: their precision known (e.g. timestamps truncated to milliseconds), ties defined, and the same tie rule used in the model and in SQL?

@@ -100,7 +100,7 @@ def findings_from_diff(diff):
             if SCENARIO_TITLE.match(text) and TITLE_DETAIL.search(text):
                 findings.append(f"{path}: scenario title names an input detail or a caller's window — {text.strip()[:80]}")
             if SCHEMA_ERROR_STEP.search(text):
-                findings.append(f"{path}: scenario asserts a schema validation error; the schema library already guarantees it — {text.strip()[:80]}")
+                findings.append(f"{path}: scenario asserts a schema validation error; the schema library already guarantees it (exception: one scenario per method for a field the change makes required) — {text.strip()[:80]}")
             continue
         if not path.endswith((".ts", ".js")):
             continue
