@@ -8,3 +8,7 @@ __pycache__/
 /.idea
 /.mcp.json
 /.claude/
+
+# Project list and .mcp.json backups written by bin/link-project.sh / bin/sync-projects.sh
+/.linked-projects
+/.backups/

@@ -21,9 +21,40 @@ bin/link-project.sh <project_path>
 Then copy the generated `.claude/.env.example` to `.claude/.env` and fill in
 the per-project values. The script is idempotent and non-destructive: it
 safely reuses its own existing symlinks, refuses to overwrite an existing
-`.mcp.json` that diverges from the template, and leaves an existing, diverged
-`.claude/settings.json` alone (a project is expected to customize its
-permissions/hooks over time — that's not an error).
+`.mcp.json` that diverges from the template (unless `--refresh-mcp`), and leaves
+an existing, diverged `.claude/settings.json` alone (a project is expected to
+customize its permissions/hooks over time — that's not an error).
+
+### Keeping linked projects up to date
+
+After pulling changes to this repo (a new shared folder, new MCP servers in
+`mcp.json.template`), refresh every linked project at once:
+
+```bash
+bin/sync-projects.sh --dry-run   # preview
+bin/sync-projects.sh             # apply
+```
+
+It finds the projects from `.linked-projects` (every `link-project.sh` run records
+its project there) plus a scan of this repo's parent directory for `.claude/`
+symlinks pointing here, then runs `link-project.sh --refresh-mcp` on each:
+
+- adds any missing symlink (a folder added to `LINK_DIRS` in `bin/link-project.sh`
+  since the project was linked);
+- replaces a `.mcp.json` that differs from the template, keeping the old copy in
+  `.backups/<project>/mcp.json.<timestamp>` (per-project values belong in
+  `.claude/.env`, which the template's `{{VAR}}` placeholders read). `--keep-mcp`
+  reports the drift instead;
+- reports, without touching, a `.claude/settings.json` that diverges from the template
+  and any `env.example` keys the project's `.claude/.env` doesn't mention (names only).
+
+Options: `--scan DIR` (repeatable) searches other directories; naming projects
+(`bin/sync-projects.sh ~/dev/a ~/dev/b`) syncs only those. Projects that no longer
+exist are dropped from `.linked-projects`. A project whose `.claude/skills` etc. are
+real directories (an old copy, not symlinks) is skipped by the scan and fails if
+named — move those folders out by hand, then `bin/link-project.sh <project>`.
+Restart Claude Code in a refreshed project twice: the first start lets `sync-env.py`
+enable/disable the new servers.
 
 ## Usage examples
 
@@ -161,10 +192,10 @@ needs and asks first when the budget is tight.
 | `github` fails: `GITHUB_TOKEN is not set` | No token in `.env` and no `gh` session: run `gh auth login` (or set `GITHUB_TOKEN`), restart |
 | `notion-oauth` says "needs authentication" | Expected until you sign in: `/mcp` → `notion-oauth` → Authenticate (browser window) |
 | Neither Notion server listed | `NOTION_MCP=off` is set in `.claude/.env` |
-| `figma` / `playwright` not listed in `/mcp` | Off unless `DESIGN_MCP=on` is in `.claude/.env`; set it, then start a session and restart once. Still missing: the project's `.mcp.json` predates them; copy the two entries from `mcp.json.template` |
+| `figma` / `playwright` not listed in `/mcp` | Off unless `DESIGN_MCP=on` is in `.claude/.env`; set it, then start a session and restart once. Still missing: the project's `.mcp.json` predates them; run `bin/sync-projects.sh` |
 | Notion 404 for a page you can open in the browser, even after re-authenticating | `notion-oauth` is signed into another workspace (a personal one can have the same name). `/get-notion-page --check` prints the workspace id; `/mcp` → `notion-oauth` → Authenticate and pick the right workspace in the consent screen's switcher; then set `NOTION_WORKSPACE_ID` in `.claude/.env` |
 | `github` fails on first start | The Docker image is being pulled — wait and restart. Docker must be running |
-| Server not found / `.mcp.json` has no `github` | The project's `.mcp.json` is an old copy; delete it and re-run `bin/link-project.sh <project>` |
+| Server not found / `.mcp.json` has no `github` | The project's `.mcp.json` is an old copy; run `bin/sync-projects.sh` (or `bin/link-project.sh --refresh-mcp <project>`) |
 | 401 / 403 / 404 from a PR skill | Run `/connect-git`; it names the failing layer (token, scope, or owner/repo / workspace/slug) |
 | Jira/Confluence skills work but `atlassian` is failed in `/mcp` | Expected — they fall back to REST. Test creds: `python3 .claude/tools/atlassian_fetch.py check` |
 | Notion 404 on a page that exists | The page isn't shared with the integration (page menu > Connections) |
@@ -289,11 +320,17 @@ needs and asks first when the budget is tight.
   auto-detection from `git remote get-url origin`) picks which one the
   PR-related skills use and whether the `github` MCP server is enabled. Notion needs no entry by default
   (hosted OAuth server); the commented `NOTION_TOKEN` / `NOTION_MCP=off` switch to an API key or turn it off.
-- `bin/link-project.sh <path>` — wires a project to this repo (symlinks +
-  generates `.mcp.json`), and appends to the project's `.gitignore` whichever of
-  `.claude/.env`, `.claude/settings.local.json` and `.mcp.json` git doesn't ignore yet.
-  It refuses to replace foreign symlinks or an existing `.mcp.json` that differs
-  from the template.
+- `bin/link-project.sh [--refresh-mcp] [--dry-run] <path>` — wires a project to this
+  repo (symlinks + generates `.mcp.json`), appends to the project's `.gitignore`
+  whichever of `.claude/.env`, `.claude/settings.local.json` and `.mcp.json` git doesn't
+  ignore yet, and records the project in `.linked-projects`. It refuses to replace
+  foreign symlinks, and an existing `.mcp.json` that differs from the template unless
+  `--refresh-mcp` (then the old copy goes to `.backups/`).
+- `bin/sync-projects.sh [--dry-run] [--keep-mcp] [--scan DIR]... [PROJECT...]` — runs
+  `link-project.sh --refresh-mcp` on every linked project; see
+  [Keeping linked projects up to date](#keeping-linked-projects-up-to-date).
+- `.linked-projects`, `.backups/` — local, gitignored: the project list and the
+  `.mcp.json` copies replaced by a refresh.
 
 ## Skills
 
@@ -346,9 +383,10 @@ Subagents invoked by the skills above — not called directly by name.
 `.claude/reviews/`, `.claude/worktrees/`, and any other session/runtime state
 are never templated here at all. `.claude/settings.json` and `.mcp.json` are
 copied *from* this repo once (see `settings.json.template` / `mcp.json.template`
-above), but the copy then belongs to the project — `link-project.sh` never
-overwrites either one afterward, so a project's customizations never need to
-(and never should) get written back here. Project `.gitignore` must exclude
+above). `settings.json` then belongs to the project — nothing overwrites it, so
+its customizations never need to (and never should) get written back here.
+`.mcp.json` is only replaced on request (`--refresh-mcp`, or `bin/sync-projects.sh`),
+with a backup; keep per-project values in `.claude/.env`, not in `.mcp.json`. Project `.gitignore` must exclude
 `.claude/.env`, `.claude/settings.local.json` and `.mcp.json` (`link-project.sh` adds
 any that are missing) and, if the project uses Biome, `**/.pretooluse-tmp-*` — see the
 `biome-pretooluse.py` note above.
