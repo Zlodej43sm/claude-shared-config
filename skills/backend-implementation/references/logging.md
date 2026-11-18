@@ -9,6 +9,7 @@ Logs serve three jobs: detect unexpected situations (alerts), debug one error, a
 - Use the error type that fits the protocol: an HTTP error with a status for REST routes, a GraphQL error with a code for GraphQL, the project's base error class (with `info` + `cause`) for RPC methods, jobs and models.
 - Static messages: `'Payment failed'` + `info: { orderId }`, never `` `Payment failed for ${orderId}` `` (dynamic text breaks grouping of the same error).
 - Don't add an error log for a failure the framework already logs as an error response; enrich the context instead (next section).
+- An expected failure the code turns into a normal answer (not found → `null` or an empty list) no longer reaches the framework's error log. Log it once at INFO with the lookup key (`logger.info({ code }, 'Code not found')`), so support can trace a reported case. INFO, not WARN: it is a normal case.
 
 ## One structured logger, few fields
 - Always the project's structured (JSON) logger, never `console.log` (not parsed by the log pipeline).
@@ -36,5 +37,6 @@ Logs serve three jobs: detect unexpected situations (alerts), debug one error, a
 ## Pre-push check
 - [ ] No `console.log`; no whole object or payload as fields; no secrets or personal data.
 - [ ] Errors thrown with static message, `info` with all inputs, `cause`; no extra error log next to them.
+- [ ] Every caught error turned into a normal answer (`null`, empty list) logs one INFO line with its lookup key.
 - [ ] Context via logger fields / child logger, not context-only log lines.
 - [ ] No duplicate of an automatic framework log; level matches the table.
