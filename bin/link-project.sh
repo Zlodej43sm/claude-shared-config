@@ -4,6 +4,10 @@
 # Usage: bin/link-project.sh [--refresh-mcp] [--dry-run] <path-to-project-repo>
 #
 # - Symlinks .claude/{skills,agents,tools,hooks,workflows} to this repo's copies.
+#   If the project has its own real .claude/<dir> (often committed to its repo,
+#   where a symlink would be undone by the next `git pull`), each shared entry is
+#   linked into it individually instead; same-named project entries win. Those
+#   per-entry links go into .git/info/exclude (local only, never committed).
 # - Generates <project>/.mcp.json from mcp.json.template (a real file, not a
 #   symlink, in case an MCP client requires that). An existing .mcp.json that
 #   differs from the template is refused, unless --refresh-mcp is given: then the
@@ -66,6 +70,65 @@ if [ ! -d "$CLAUDE_DIR" ] && would "create $CLAUDE_DIR"; then
   mkdir -p "$CLAUDE_DIR"
 fi
 
+# Git-ignore a path locally (.git/info/exclude, never committed) unless the
+# project already ignores it. $1 is relative to $PROJECT_DIR.
+exclude_locally() {
+  git -C "$PROJECT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  git -C "$PROJECT_DIR" check-ignore -q --no-index "$1" && return 0
+  local prefix common_dir exclude_file
+  prefix="$(git -C "$PROJECT_DIR" rev-parse --show-prefix)"
+  common_dir="$(cd "$PROJECT_DIR" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+  exclude_file="$common_dir/info/exclude"
+  mkdir -p "$common_dir/info"
+  if [ -s "$exclude_file" ] && [ -n "$(tail -c1 "$exclude_file")" ]; then
+    echo >>"$exclude_file"
+  fi
+  echo "/$prefix$1" >>"$exclude_file"
+}
+
+# The project keeps its own .claude/<name> as a real directory (often committed
+# to its repo, so a `git pull` would put it back over a symlink anyway): link
+# each shared entry into it individually instead. Entries the project already
+# has — its own skill/agent/hook of the same name — win and are left alone.
+merge_dir() {
+  # Space-separated lists, not arrays: bash 3.2 (macOS) treats an empty
+  # array as unbound under `set -u`.
+  local name="$1" dir="$CLAUDE_DIR/$1" entry src base dest
+  local added="" own="" stale="" n_added=0
+  # Drop links to shared entries that were since removed or renamed.
+  for entry in "$dir"/*; do
+    [ -L "$entry" ] || continue
+    case "$(readlink "$entry")" in "$SHARED_DIR/$name/"*) ;; *) continue ;; esac
+    [ -e "$entry" ] && continue
+    if would "remove stale link $entry"; then rm "$entry"; fi
+    stale="$stale $(basename "$entry")"
+  done
+  for src in "$SHARED_DIR/$name"/*; do
+    [ -e "$src" ] || continue
+    base="$(basename "$src")"
+    case "$base" in __pycache__ | *.pyc) continue ;; esac
+    dest="$dir/$base"
+    if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$src" ]; then
+      continue
+    elif [ -e "$dest" ] || [ -L "$dest" ]; then
+      own="$own $base"
+      continue
+    fi
+    if would "link $dest -> $src"; then
+      ln -s "$src" "$dest"
+      exclude_locally ".claude/$name/$base"
+    fi
+    added="$added $base"
+    n_added=$((n_added + 1))
+  done
+  local verb="merged"
+  [ "$DRY_RUN" -eq 1 ] && verb="would merge"
+  echo "$verb into project's own directory $dir: $n_added new link(s)${added:+ (${added# })}${stale:+; removed stale:$stale}"
+  if [ -n "$own" ]; then
+    echo "  project's own version kept (shadows the shared one):$own"
+  fi
+}
+
 for name in "${LINK_DIRS[@]}"; do
   target="$CLAUDE_DIR/$name"
   if [ -L "$target" ]; then
@@ -80,8 +143,11 @@ for name in "${LINK_DIRS[@]}"; do
     # erroring, nesting it (e.g. hooks/hooks -> hooks) on every re-run.
     echo "already linked: $target -> $SHARED_DIR/$name"
     continue
+  elif [ -d "$target" ]; then
+    merge_dir "$name"
+    continue
   elif [ -e "$target" ]; then
-    echo "refusing to overwrite existing non-symlink: $target (remove/merge it manually first)" >&2
+    echo "refusing to overwrite existing non-directory: $target (remove it manually first)" >&2
     exit 1
   fi
   if would "link $target -> $SHARED_DIR/$name"; then

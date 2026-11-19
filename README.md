@@ -33,7 +33,11 @@ After pulling changes to this repo (a new shared folder, new MCP servers in
 ```bash
 bin/sync-projects.sh --dry-run   # preview
 bin/sync-projects.sh             # apply
+bin/sync-projects.sh --verify    # apply, then confirm Claude Code loads every shared skill/agent
 ```
+
+Run it again after a `git pull` in a project that commits its own `.claude/skills`
+(see below) — and whenever a skill you expect is missing from `/` in a project.
 
 It finds the projects from `.linked-projects` (every `link-project.sh` run records
 its project there) plus a scan of this repo's parent directory for `.claude/`
@@ -41,6 +45,13 @@ symlinks pointing here, then runs `link-project.sh --refresh-mcp` on each:
 
 - adds any missing symlink (a folder added to `LINK_DIRS` in `bin/link-project.sh`
   since the project was linked);
+- if the project keeps its **own** `.claude/skills`, `agents` or `hooks` as a real
+  directory (typically committed to the project's repo by its team — a `git pull`
+  there replaces a whole-folder symlink with the committed folder, hiding every shared
+  skill), links each shared skill/agent/hook into that directory one by one instead.
+  The project's same-named entries win (reported as "project's own version kept"),
+  committed files are never touched, links to entries since removed here are deleted,
+  and the new links are git-ignored via `.git/info/exclude` (local, never committed);
 - replaces a `.mcp.json` that differs from the template, keeping the old copy in
   `.backups/<project>/mcp.json.<timestamp>` (per-project values belong in
   `.claude/.env`, which the template's `{{VAR}}` placeholders read). `--keep-mcp`
@@ -49,12 +60,13 @@ symlinks pointing here, then runs `link-project.sh --refresh-mcp` on each:
   and any `env.example` keys the project's `.claude/.env` doesn't mention (names only).
 
 Options: `--scan DIR` (repeatable) searches other directories; naming projects
-(`bin/sync-projects.sh ~/dev/a ~/dev/b`) syncs only those. Projects that no longer
-exist are dropped from `.linked-projects`. A project whose `.claude/skills` etc. are
-real directories (an old copy, not symlinks) is skipped by the scan and fails if
-named — move those folders out by hand, then `bin/link-project.sh <project>`.
-Restart Claude Code in a refreshed project twice: the first start lets `sync-env.py`
-enable/disable the new servers.
+(`bin/sync-projects.sh ~/dev/a ~/dev/b`) syncs only those. `--verify` starts a minimal
+headless session (`claude -p`, one short model call) in each project and compares the
+skills and agents Claude Code reports at startup with this repo's, listing any that
+aren't loaded; a project that fails verification counts as failed. Projects that no
+longer exist are dropped from `.linked-projects`. Skills and agents are picked up by
+the next session; restart Claude Code in a project with a refreshed `.mcp.json`
+twice — the first start lets `sync-env.py` enable/disable the new servers.
 
 ## Usage examples
 
@@ -195,6 +207,7 @@ needs and asks first when the budget is tight.
 | `figma` / `playwright` not listed in `/mcp` | Off unless `DESIGN_MCP=on` is in `.claude/.env`; set it, then start a session and restart once. Still missing: the project's `.mcp.json` predates them; run `bin/sync-projects.sh` |
 | Notion 404 for a page you can open in the browser, even after re-authenticating | `notion-oauth` is signed into another workspace (a personal one can have the same name). `/get-notion-page --check` prints the workspace id; `/mcp` → `notion-oauth` → Authenticate and pick the right workspace in the consent screen's switcher; then set `NOTION_WORKSPACE_ID` in `.claude/.env` |
 | `github` fails on first start | The Docker image is being pulled — wait and restart. Docker must be running |
+| Shared skills missing from `/` in one project (only a few, project-specific ones show) | The project commits its own `.claude/skills`, and a `git pull` replaced the symlink with that folder. Run `bin/sync-projects.sh --verify` — it links the shared skills into the folder one by one |
 | Server not found / `.mcp.json` has no `github` | The project's `.mcp.json` is an old copy; run `bin/sync-projects.sh` (or `bin/link-project.sh --refresh-mcp <project>`) |
 | 401 / 403 / 404 from a PR skill | Run `/connect-git`; it names the failing layer (token, scope, or owner/repo / workspace/slug) |
 | Jira/Confluence skills work but `atlassian` is failed in `/mcp` | Expected — they fall back to REST. Test creds: `python3 .claude/tools/atlassian_fetch.py check` |
@@ -321,12 +334,14 @@ needs and asks first when the budget is tight.
   PR-related skills use and whether the `github` MCP server is enabled. Notion needs no entry by default
   (hosted OAuth server); the commented `NOTION_TOKEN` / `NOTION_MCP=off` switch to an API key or turn it off.
 - `bin/link-project.sh [--refresh-mcp] [--dry-run] <path>` — wires a project to this
-  repo (symlinks + generates `.mcp.json`), appends to the project's `.gitignore`
+  repo (symlinks, or per-entry links into a project's own real `.claude/<dir>` — see
+  [Keeping linked projects up to date](#keeping-linked-projects-up-to-date) — and
+  generates `.mcp.json`), appends to the project's `.gitignore`
   whichever of `.claude/.env`, `.claude/settings.local.json` and `.mcp.json` git doesn't
   ignore yet, and records the project in `.linked-projects`. It refuses to replace
   foreign symlinks, and an existing `.mcp.json` that differs from the template unless
   `--refresh-mcp` (then the old copy goes to `.backups/`).
-- `bin/sync-projects.sh [--dry-run] [--keep-mcp] [--scan DIR]... [PROJECT...]` — runs
+- `bin/sync-projects.sh [--dry-run] [--keep-mcp] [--verify] [--scan DIR]... [PROJECT...]` — runs
   `link-project.sh --refresh-mcp` on every linked project; see
   [Keeping linked projects up to date](#keeping-linked-projects-up-to-date).
 - `.linked-projects`, `.backups/` — local, gitignored: the project list and the
