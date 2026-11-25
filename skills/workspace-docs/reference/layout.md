@@ -8,6 +8,8 @@
     services/<repo>.md          one per repo folder (file name = folder name)
     services/<repo>--<topic>.md overflow chunk (usually --review), linked by **More:** in the parent
     lookups.md                  numbered index (§1, §2 …) → docs/lookups/*.md
+    lookups--<group>.md         overflow index for one group (e.g. review-lessons); shares the § numbers;
+                                scaffold registers a lookup named <group>-… here, linked by **More:**
     lookups/<topic>.md          one table per concern, titled "# Lookups §N: <topic>"
     connections/<flow>.md       flow diagram + "Points that bite", titled "# Connections: <flow>"
     connections/ci-and-deploy.md  branch → env, deploy targets, routing

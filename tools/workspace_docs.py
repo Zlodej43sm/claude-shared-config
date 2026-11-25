@@ -35,7 +35,8 @@ through a project's .claude/ symlinks) and, without --root, a root inside any gi
                                               the backup that no longer appear anywhere in CLAUDE.md + docs/
   workspace_docs.py scaffold <kind> <name> [--summary S] [--keywords a,b] [--title T]
                                               kind: service|recipe|lookup|connection|topic; writes a stub chunk
-                                              and registers it in its index (recipes/README.md, lookups.md)
+                                              and registers it in its index (recipes/README.md, lookups.md; a
+                                              lookup named <group>-… goes to overflow lookups--<group>.md)
   workspace_docs.py link add <url> --title T --why W [--tags a,b] [--pin]
   workspace_docs.py link remove <url>
   workspace_docs.py link list                 links registry docs/links.md; --pin mirrors into CLAUDE.md
@@ -546,7 +547,7 @@ def cmd_audit(root, a):
 STUBS = {
     "service": ("docs/services/{name}.md", "# {name}\n\n**What it is:** {summary}. (family: <family>)\n**Top review risks:** <risks>\n**Related:** <`docs/services/x.md`>\n**Code:** `{name}/` · **Index:** `docs/services/README.md` · **Workspace map:** root `CLAUDE.md` §2-§3 · **Lookups:** `docs/lookups.md`\n\n---\n\n- **Stack:** <>\n- **CI/deploy:** <>\n- **Structure:** <>\n- **Data:** <>\n- **Auth:** <>\n- **Commands:** <>; single `<>`\n- **Review hotspots:** <>\n- **Drift:** <>\n"),
     "recipe": ("docs/recipes/{name}.md", "# Recipe: {title}\n\nIndex: `docs/recipes/README.md`. Source: <page title + link>, read {today}.\n\n1. <step with exact command>\n\n## Gotchas\n- <>\n"),
-    "lookup": ("docs/lookups/{name}.md", "# Lookups §{section}: {title}\n\nIndex: `docs/lookups.md`.\n\n| <Key> | Owner / producer | Also touched by / consumer | Notes |\n|---|---|---|---|\n"),
+    "lookup": ("docs/lookups/{name}.md", "# Lookups §{section}: {title}\n\nIndex: `{index}`.\n\n| <Key> | Owner / producer | Also touched by / consumer | Notes |\n|---|---|---|---|\n"),
     "connection": ("docs/connections/{name}.md", "# Connections: {title}\n\nRoot `CLAUDE.md` §3. Tables: `docs/lookups.md`.\n\n```\n<caller> ─<mechanism>─► <callee>\n```\n\n## Points that bite\n- **<name>:** <>\n"),
     "topic": ("docs/{name}.md", "# {title}\n\nRoot `CLAUDE.md` §5.\n\n- <>\n"),
 }
@@ -562,6 +563,21 @@ def append_table_row(index, row):
     index.write_text("\n".join(lines) + "\n")
 
 
+def lookup_indexes(root):
+    """docs/lookups.md and its overflow indexes docs/lookups--<group>.md; § numbers are shared across all."""
+    main = root / "docs/lookups.md"
+    return ([main] if main.is_file() else []) + sorted((root / "docs").glob("lookups--*.md"))
+
+
+def lookup_index_for(root, name):
+    """The overflow index whose <group> prefixes the chunk name (review-lessons-x → lookups--review-lessons.md)."""
+    for idx in sorted((root / "docs").glob("lookups--*.md"), key=lambda p: -len(p.stem)):
+        group = idx.stem.split("--", 1)[1]
+        if name == group or name.startswith(group + "-"):
+            return idx
+    return root / "docs/lookups.md"
+
+
 NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*(--[A-Za-z0-9_][A-Za-z0-9_.-]*)?$")
 
 
@@ -573,9 +589,10 @@ def cmd_scaffold(root, a):
               file=sys.stderr); return 2
     title = a.title or name.replace("-", " ").capitalize()
     section = ""
-    lookups_idx = root / "docs/lookups.md"
+    lookups_idx = lookup_index_for(root, name)
     if a.kind == "lookup" and lookups_idx.is_file():
-        nums = [int(n) for n in re.findall(r"^\|\s*(\d+)\s*\|", lookups_idx.read_text(), re.M)]
+        nums = [int(n) for idx in lookup_indexes(root)
+                for n in re.findall(r"^\|\s*(\d+)\s*\|", idx.read_text(), re.M)]
         section = str(max(nums, default=0) + 1)
     path = root / path_t.format(name=name)
     if not path.resolve().is_relative_to((root / "docs").resolve()):
@@ -586,14 +603,15 @@ def cmd_scaffold(root, a):
     summary = a.summary or f"<one line: what {name} answers>"
     keywords = ", ".join(k.strip() for k in (a.keywords or "").split(",") if k.strip()) or "<keywords>"
     fm = f"---\nsummary: {summary}\nkeywords: [{keywords}]\nverified: {TODAY}\n---\n"
-    path.write_text(fm + body_t.format(name=name, title=title, summary=summary, root=root, today=TODAY, section=section))
+    path.write_text(fm + body_t.format(name=name, title=title, summary=summary, root=root, today=TODAY, section=section,
+                                       index=rel(root, lookups_idx)))
     print(f"created {rel(root, path)}")
     if a.kind == "recipe" and (root / "docs/recipes/README.md").is_file():
         append_table_row(root / "docs/recipes/README.md", f"| {summary} | `docs/recipes/{name}.md` | <source> |")
         print("registered in docs/recipes/README.md")
     elif a.kind == "lookup" and lookups_idx.is_file():
         append_table_row(lookups_idx, f"| {section} | {title} | `docs/lookups/{name}.md` |")
-        print(f"registered as §{section} in docs/lookups.md")
+        print(f"registered as §{section} in {rel(root, lookups_idx)}")
     else:
         print("now add a pointer: service → docs/services/README.md row + CLAUDE.md §2; connection → CLAUDE.md §3; topic → CLAUDE.md Quick navigation")
     return 0

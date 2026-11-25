@@ -19,6 +19,7 @@ Your prompt contains:
 - `project_root` — absolute path to the primary project.
 - `target_repos` — the repos the ticket changes.
 - `planning_standard` — absolute path of the project's roadmap or plan standard, or `none`.
+- `open_review` — review comments already left on the ticket's open PR, or `none`.
 
 ## Step 1 — Parse the context block
 
@@ -32,6 +33,8 @@ Extract and internalize:
 ## Step 2 — Explore the codebase
 
 **Project standard.** When `planning_standard` is not `none`, read it before anything else, then the standards and review-lesson docs it names for the layers you touch. Carry them into the plan: the rules that apply under "Existing patterns to follow" and "Risks", and its pre-push checks (commands and hooks) under "QA commands".
+
+**Open review.** When `open_review` is not `none`, check each comment against the code you plan to change. In the plan, add an "Open review" table: comment, verdict (still applies / gone with this design / already covered by `<test>`), evidence, and the task that answers it. A comment that still applies gets a task; one the redesign removes is answered in the PR description.
 
 **First**, extract from the CLAUDE.md in the context block:
 - Source root path (e.g. `src/`, `lib/`, `pkg/`, `app/`)
@@ -208,6 +211,8 @@ When `planning_standard` is given, add its pre-push checks to this table (for ex
 
 - [ ] **Task 6**: Update CI / devops (if needed)
   <description; omit if no CI changes needed>
+
+- [ ] **Task N (last)**: Reviewer pass — run `implement` Step 4b: a fresh agent reviews the whole diff with the reviewer docs from `planning_standard` (lenses, pre-push checks, review lessons) and the open review; fix what it confirms, log it in the review log.
 
 ---
 

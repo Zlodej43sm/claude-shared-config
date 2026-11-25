@@ -57,6 +57,7 @@ Tell the user: "Context fetched — Jira ticket, Confluence docs, and project st
 
 - **Target repos.** If `<project_root>` is itself a git repository, it is the target. Otherwise it is a multi-repo workspace: pick the repo(s) the ticket changes from the context block (named repos and paths, the parent epic) and the workspace index the root `CLAUDE.md` points to. Ask the user only when two candidates remain.
 - **Planning standard.** If the root `CLAUDE.md`, or a doc it routes "plan a ticket" / `/implement` to, names a plan standard, pass its absolute path; otherwise `none`.
+- **Open PR and its review.** If the current branch (or the ticket key) already has an open PR, look it up with the project's git-host tools (`/connect-git` sets them up) and fetch every review comment, with its file, line, author and whether it was answered. Pass them to the planner as `open_review`. The plan gives each one a verdict (still applies / gone with the redesign / already covered by `<test>`), and the tasks fix the ones that still apply. Re-planning without them repeats what the reviewer already asked.
 - **plan_dir.** `<project_root>/.claude/plans` for a single repo; in a workspace, the location the planning standard names, else `<first target repo>/.claude/plans`.
 
 ## Step 2 — Generate the plan via `feature-planner` agent
@@ -71,6 +72,7 @@ Values:
   project_root:       <absolute path>
   target_repos:       <comma-separated absolute paths from Step 1b>
   planning_standard:  <absolute path, or "none">
+  open_review:        <the open PR's review comments from Step 1b, or "none">
 
 --- BEGIN JIRA CONTEXT ---
 <paste the full context block verbatim here>
@@ -127,7 +129,17 @@ For each `- [ ]` task in the **Step-by-step tasks** section, execute it in order
 4. Fix failing tests before declaring done. If a build command is listed (not "n/a"), run it last.
 5. Mark each task `- [x]` in the plan file as it completes (update the file with Edit).
 
-When all tasks pass: report a completion summary — which files were created/modified, test results, and any open questions that remain unanswered.
+#### Step 4b — Review the diff the way the project's reviewer will
+
+Reviewers here often review with an AI pass that follows written lenses. Run that same pass before declaring done, so their first round finds nothing new:
+
+1. **Find the reviewer material.** Follow the root `CLAUDE.md` (or the workspace index it points to) for "write / review code": reviewer profiles, a review-pass or lens doc, a pre-push checklist, and per-PR `review-lessons` files for this repo. None found → use the `backend-review` / `frontend-review` / `test-design` skills.
+2. **Spawn one fresh reviewer agent** (`general-purpose`, read-only). Give it the repo path, the base branch, the uncommitted files, those docs, and every comment of earlier rounds on this PR (fetched from the git host; say which still apply). Do not give it your reasoning or the plan's conclusions. Ask it to act as the named reviewer: every lens on every changed file, findings as `file:line — [tag] comment — evidence` in that reviewer's tag style, a still-applies / gone / covered verdict for each earlier comment, and the pre-push greps and size caps.
+3. **Fix every finding you confirm** against the code, then re-run the QA commands. Reject a finding only with evidence. Put anything deliberately left open into the PR description with its reason or ticket.
+4. **Repeat** steps 2–3 once more on the new diff if the fixes changed behaviour or added files.
+5. **Log it** in the plan's review log: what the pass found and what changed. Turn each finding the earlier steps should have prevented into a rule in the project's reviewer docs (the project's self-review loop, if it has one), so the next plan and implementation cover it.
+
+When all tasks pass and Step 4b is clean: report a completion summary — which files were created/modified, test results, the reviewer-pass findings and how each was resolved, and any open questions that remain unanswered.
 
 ### If the user replies `modify: <description>`
 
