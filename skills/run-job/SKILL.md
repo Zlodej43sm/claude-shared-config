@@ -38,6 +38,7 @@ Generic and reusable: no company, product or project data lives here. Where jobs
    - **Second dry run**: nothing left to do, so the job is safe to run again.
 6. **Record and clean up.** Counts per run, duration, IDs of failed items (no codes, no personal data) in the ticket's run notes. Then: `unset` the key, the user deletes it at the third party, remove the worktree and logs, close the terminal tabs you opened.
 7. **Report.** Offer drafts for the PR description (`pr-description` skill: results under "how to verify") and the team thread. Name open decisions, such as items the job skips by design, for the data owner. Before a production write, ask for the data owner's go-ahead and a low-traffic window for a long run.
+   - A message to another team is two lines. Line 1: what ran, on which environment, dry run or real, and whether production data changed (what, or "no change"). Line 2: what you need from them or the next step. Counts and logs go in the thread only if asked. The user sends it, in their own words.
 
 ## Explaining it to the user
 

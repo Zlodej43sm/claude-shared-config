@@ -321,7 +321,9 @@ From `.claude/reviews/pr-<PR_ID>.md`, extract every `Cx` finding header and body
 - **File-only candidates** — header has `` `path/to/file.py` `` with no `:LINE`.
 - **True general candidates** — header has no file path.
 
-**Comment body transformation:** Header `**Cx** — \`path:line\` — severity`→ opening line`**Cx — emoji severity**` (drop the path:line, keep badge + severity). Drop the `PR line:` / `PR file:` link line too, since the comment already sits on that line; keep `Same pattern:` and `To fix (not in the PR):` links. Follow with the substantive paragraph(s). Strip any meta-framing. Only a `should-fix (decision needed)` finding gets no opening line: post its plain-text question alone, so it reads like a comment from a human reviewer. Every other finding keeps the `**Cx — emoji severity**` opening line.
+**Comment body transformation:** post the body alone, in plain text, so it reads like a comment the user wrote: drop the header (`Cx`, path:line, emoji, severity) and the `PR line:` / `PR file:` link line, since the comment already sits on that line; keep `Same pattern:` and `To fix (not in the PR):` links and any `suggestion` block. Strip any meta-framing, bold, headings and "How it can fail" / "Solution proposal" labels.
+
+**Pick and confirm before posting.** Propose only the `blocking`, `should-fix`, `test-gap` and `question` findings; leave `suggestion` and `nit` out unless the user names them. Show the exact text of each proposed comment and post only the ones the user keeps, with the user's edits. The user reviews the code themself; this step only saves typing.
 
 ### 3b.5 — Gate: fetch the PR diffstat
 

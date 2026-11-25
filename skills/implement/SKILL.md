@@ -139,7 +139,7 @@ Reviewers here often review with an AI pass that follows written lenses. Run tha
 4. **Repeat** steps 2–3 once more on the new diff if the fixes changed behaviour or added files.
 5. **Log it** in the plan's review log: what the pass found and what changed. Turn each finding the earlier steps should have prevented into a rule in the project's reviewer docs (the project's self-review loop, if it has one), so the next plan and implementation cover it.
 
-When all tasks pass and Step 4b is clean: report a completion summary — which files were created/modified, test results, the reviewer-pass findings and how each was resolved, and any open questions that remain unanswered.
+When all tasks pass and Step 4b is clean: report a completion summary — which files were created/modified, test results, the reviewer-pass findings and how each was resolved, and any open questions that remain unanswered. End it with the hand-off: the code is a draft until the user has read every changed line and run it; list the files in reading order and the commands to run it. The PR stays a draft until then.
 
 ### If the user replies `modify: <description>`
 
@@ -157,4 +157,5 @@ Delete the plan file and tell the user the plan has been discarded.
 - **No skipping context.** Even if you think you know what the ticket is about, always spawn the `jira-context` agent. The plan quality depends on the full Confluence content.
 - **No token leaks.** Credentials are read from `.env`; never echo them or include them in subagent prompts.
 - **No git mutations.** No `git commit`, `git push`, `git checkout` unless the user explicitly asks after implementation.
+- **No review request on the user's behalf.** Never mark a PR ready, request reviewers or post in a review channel: the user does it after their own check.
 - **No inventing file paths.** The `feature-planner` agent confirms paths via Read/Glob. Trust its output.

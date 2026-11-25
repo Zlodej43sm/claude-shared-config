@@ -369,7 +369,7 @@ Every finding with a file anchor gets a link line right under its header that op
 
 ### Finding body writing style
 
-Finding bodies are posted verbatim as PR comments (Bitbucket or GitHub) and will be read by the author as peer feedback. Write them in direct, expert voice:
+Finding bodies are drafts the user reads, cuts and rewrites before posting a comment of their own; they are never posted as an AI review. Write each one the way a teammate writes a PR comment: plain words, no labels, emoji, bold or headings in the body, in direct, expert voice:
 
 - **Lead with the specific problem** — first sentence names exactly what is wrong or missing. No preamble.
 - **State the consequence** — one sentence on what fails, degrades, or misleads if left unfixed.
@@ -377,7 +377,8 @@ Finding bodies are posted verbatim as PR comments (Bitbucket or GitHub) and will
 - **No hedging**: cut "might", "potentially", "could arguably", "it may be worth noting", "one might consider".
 - **No meta-commentary**: cut "this finding notes", "the reviewer observed", "upon inspection", "it is important to".
 - **Imperative mood for fixes**: "Round `score` to 4 decimal places" not "It would be better to round...".
-- **Tight**: aim for 3–5 sentences total. A code snippet counts as part of the fix, not extra length.
+- **Tight**: one to three sentences. A `suggestion` or code block counts as part of the fix, not extra length.
+- **Few**: raise a `nit` or `suggestion` only when it changes how the code reads or runs; group style points into one finding.
 
 ```
 # PR #<id>: <title>
