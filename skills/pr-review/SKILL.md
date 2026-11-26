@@ -1,9 +1,9 @@
 ---
 name: pr-review
-description: Review a Bitbucket or GitHub PR (by number, URL, or branch) — parses the PR title and description for every Jira ticket and Confluence link, batch-fetches them all in one structured preflight pass to build a base logic understanding, asks targeted clarifying questions about cross-service dependencies before the review starts, then delegates to the pr-reviewer subagent for a thorough structured review.
+description: Review a Bitbucket, GitHub or Azure DevOps PR (by number, URL, or branch) — parses the PR title and description for every Jira ticket and Confluence link, batch-fetches them all in one structured preflight pass to build a base logic understanding, asks targeted clarifying questions about cross-service dependencies before the review starts, then delegates to the pr-reviewer subagent for a thorough structured review.
 ---
 
-# pr-review — entry point for Bitbucket/GitHub PR review
+# pr-review — entry point for Bitbucket/GitHub/Azure DevOps PR review
 
 You are the entry point. Your job, in order:
 
@@ -22,11 +22,12 @@ Do **not** fetch the PR diff, classify files, or write the review yourself. The 
 
 All executable logic lives in `.claude/tools/`. Never inline bash or python — call the tools.
 
-This skill supports two git-hosting backends, **Bitbucket** and **GitHub**. `detect_git_host.sh` resolves which one applies to this project (see Step 0); every later step picks the matching `bb_*.sh` or `gh_*.sh` tool. Each pair returns the **same JSON shape**, so nothing downstream — the preflight in Step 1.5, the `pr-reviewer` subagent, Step 3's publishing — needs host-specific parsing. The one real behavioral difference: GitHub has no true "file-level, no line" comment anchor, so `gh_post_comment.sh`'s path-only mode falls back to a general comment prefixed with the file path (see that tool's header for detail).
+This skill supports three git-hosting backends, **Bitbucket**, **GitHub** and **Azure DevOps**. `detect_git_host.sh` resolves which one applies to this project (see Step 0); for Bitbucket and GitHub every later step picks the matching `bb_*.sh` or `gh_*.sh` tool. **Azure DevOps (`host=azure`)** has no script pair: you read and post through the `azure-devops` MCP server and take diffs and code from the local clone, following [`references/azure-devops.md`](references/azure-devops.md) (cited below as *Azure §N*); the files you write there have the same shape as the scripts' output. Each pair returns the **same JSON shape**, so nothing downstream — the preflight in Step 1.5, the `pr-reviewer` subagent, Step 3's publishing — needs host-specific parsing. The one real behavioral difference: GitHub has no true "file-level, no line" comment anchor, so `gh_post_comment.sh`'s path-only mode falls back to a general comment prefixed with the file path (see that tool's header for detail).
 
 | Tool                                                                                                           | Purpose                                                                                                                                                                                               |
 | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `detect_git_host.sh`                                                                                           | Resolve `bitbucket` or `github` for this project → stdout bare word                                                                                                                                   |
+| `detect_git_host.sh`                                                                                           | Resolve `bitbucket`, `github` or `azure` for this project → stdout bare word                                                                                                                          |
+| `azure_repo.py parse-url <URL>` / `origin` / `find-clone --org --project --repo`                               | Azure DevOps only: PR URL → `{org, project, repo, pr_id}`; the local clone of that repo → `{repo_dir}` (Azure §2)                                                                                     |
 | `bb_pr_fetch.sh <PR_ID>` / `gh_pr_fetch.sh <PR_NUMBER>`                                                        | Fetch PR metadata + commits → stdout JSON (no on-disk side effects — private per-invocation temp files, removed on exit)                                                                              |
 | `bb_pr_lookup.sh <BRANCH>` / `gh_pr_lookup.sh <BRANCH>`                                                        | Find open PR by branch → stdout JSON `{mode, pr_id?, title?, choices?}`                                                                                                                               |
 | `bb_pr_diffstat.sh <PR_ID>` / `gh_pr_diffstat.sh <PR_NUMBER>`                                                  | List all files changed in a PR → stdout JSON `{changed_files: ["path/to/file.ts", ...]}`                                                                                                              |
@@ -37,7 +38,7 @@ This skill supports two git-hosting backends, **Bitbucket** and **GitHub**. `det
 | `extract_pr_links.py`                                                                                          | stdin: PR text → stdout JSON `{jira_keys, conf_page_ids, external_repos}` + writes `$PR_REVIEW_CACHE_DIR/link_registry.json` (requires `PR_REVIEW_CACHE_DIR` env)                                     |
 | `extract_secondary_links.py [--fetched-keys=…] [--fetched-pages=…]`                                            | Reads `$PR_REVIEW_CACHE_DIR/jira_*.json` + `$PR_REVIEW_CACHE_DIR/conf_*.json` → stdout JSON `{new_jira_keys, new_conf_page_ids}` + updates `$PR_REVIEW_CACHE_DIR/link_registry.json`                  |
 | `build_prefetch_context.py --pr-id=N --title=T --source-branch=B --dest-branch=B --source-commit=H --author=A` | Reads all `$PR_REVIEW_CACHE_DIR/jira_*.json` + `$PR_REVIEW_CACHE_DIR/conf_*.json` + `$PR_REVIEW_CACHE_DIR/link_registry.json` → stdout PREFETCHED_CONTEXT block                                       |
-| `pr_line_links.py --host=H --owner=O --repo=R --pr=N --commit=H path:LINE …` (diff on stdin)                   | Used by the `pr-reviewer` subagent: turns each finding's `path:LINE` into a link to the PR's diff view at that line → stdout JSON `[{anchor, in_diff, in_hunk, link, pr_link, blob_link}]`             |
+| `pr_line_links.py --host=H --owner=O --repo=R --pr=N --commit=H path:LINE …` (diff on stdin; Azure: `--owner=<org>/<project>`) | Used by the `pr-reviewer` subagent: turns each finding's `path:LINE` into a link to the PR's diff view at that line → stdout JSON `[{anchor, in_diff, in_hunk, link, pr_link, blob_link}]`             |
 
 ---
 
@@ -48,7 +49,7 @@ This skill supports two git-hosting backends, **Bitbucket** and **GitHub**. `det
 - `<pr-identifier> [-- <repo1> [<repo2> ...]]`
     - `<pr-identifier>` — one of:
         - A bare PR number: `2`, optionally `#2`. Resolved against `$BITBUCKET_WORKSPACE/$BITBUCKET_REPO_SLUG` or `$GITHUB_OWNER/$GITHUB_REPO` from `.env`, whichever the detected git host uses (see Step 0).
-        - A full Bitbucket PR URL: `https://bitbucket.org/<workspace>/<repo>/pull-requests/<id>`, or a full GitHub PR URL: `https://github.com/<owner>/<repo>/pull/<id>`. Trailing path/query is fine either way. When the URL names a workspace/repo (or owner/repo) different from `.env`, the URL wins — and its host overrides Step 0's detected host too.
+        - A full Bitbucket PR URL: `https://bitbucket.org/<workspace>/<repo>/pull-requests/<id>`, a full GitHub PR URL: `https://github.com/<owner>/<repo>/pull/<id>`, or a full Azure DevOps PR URL: `https://dev.azure.com/<org>/<project>/_git/<repo>/pullrequest/<id>` (or `https://<org>.visualstudio.com/<project>/_git/<repo>/pullrequest/<id>`). Trailing path/query is fine. When the URL names a workspace/repo (or owner/repo) different from `.env`, the URL wins — and its host overrides Step 0's detected host too.
         - A source branch name: anything that isn't all digits and doesn't look like a URL, e.g. `feat/$JIRA_WORKSPACE-2-description`.
         - Empty: use the current branch (`git branch --show-current`).
     - `--` followed by one or more **related repo paths or slugs** (e.g. `../sibling-service`, `../shared-lib`) — microservices / sibling packages the reviewer should consider when assessing cross-service contract changes. Optional; omit if not relevant.
@@ -68,7 +69,7 @@ echo "HOST=$HOST CACHE_DIR=$CACHE_DIR"
 
 Shell variables don't survive between commands. Carry every value this skill resolves (host, cache path, PR id, branch, source commit) as a literal: each later block re-sets what it uses from the value printed or resolved earlier, as in `HOST="<host printed above>"`.
 
-The host is `bitbucket` or `github`; it decides which tool script and which credential set applies. If `detect_git_host.sh` exited non-zero (empty host), tell the user to set `GIT_HOST=bitbucket` or `GIT_HOST=github` in `.claude/.env` and stop.
+The host is `bitbucket`, `github` or `azure`; it decides which tool script (or, for `azure`, the MCP server) and which credential set applies. A PR URL in `args` sets the host itself (Step 1), so a failed detection matters only for a bare number, a branch or empty args: then tell the user to set `GIT_HOST=bitbucket`, `GIT_HOST=github` or `GIT_HOST=azure` in `.claude/.env` and stop.
 
 The cache path is a fresh, unique directory for this invocation's Jira/Confluence prefetch data. Every command that calls `extract_pr_links.py`, `jira_fetch_batch.sh`, `conf_fetch_batch.sh`, `extract_secondary_links.py`, or `build_prefetch_context.py` must `export PR_REVIEW_CACHE_DIR="<path printed above>"` first (in addition to loading `.claude/.env` with `env_exports.py`) — these tools reject a missing `PR_REVIEW_CACHE_DIR` rather than falling back to a shared location. This keeps concurrent or sequential `/pr-review` runs — different PRs, different projects sharing this same tool set, or two sessions running at once — from reading each other's cached tickets and pages out of a shared temp directory.
 
@@ -76,6 +77,7 @@ Required keys:
 - **Jira**: none. Tickets and pages are read through the hosted Atlassian MCP connector first; `JIRA_EMAIL` / `JIRA_API_TOKEN` are only the fallback (order: `agents/jira-context.md` → "Access paths"). Never stop because they are missing or placeholders. `JIRA_BASE_URL` names the site (else ask the connector's `getAccessibleAtlassianResources`).
 - **When the host is `bitbucket`**: `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`.
 - **When the host is `github`**: `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`GITHUB_API_URL` is optional — only needed for GitHub Enterprise Server).
+- **When the host is `azure`**: no key. Org, project and repo come from the PR URL, else `AZURE_DEVOPS_ORG` / `_PROJECT` / `_REPO`; check the prerequisites in Azure §1 (MCP server present, local clone) instead.
 
 Optional keys: `CONFLUENCE_BASE_URL`. If absent, falls back to the host of `$JIRA_BASE_URL` for Confluence URL matching.
 
@@ -90,10 +92,11 @@ Parse the pr-identifier portion of `args`:
 - `^#?[0-9]+$` → `PR_ID = digits only`. Skip to Step 1.5, using the host from Step 0.
 - `bitbucket.org/<ws>/<repo>/pull-requests/<id>(/.*)?` → extract workspace, repo, id; override `.env` values and set `HOST=bitbucket` (an explicit URL always wins over Step 0's detected host). Skip to Step 1.5.
 - `github.com/<owner>/<repo>/pull/<id>(/.*)?` → extract owner, repo, id; override `.env` values and set `HOST=github`. Skip to Step 1.5.
+- `dev.azure.com/…/_git/…/pullrequest/<id>` or `<org>.visualstudio.com/…/_git/…/pullrequest/<id>` → `azure_repo.py parse-url` and `find-clone` (Azure §2); set `HOST=azure`. Skip to Step 1.5.
 - Empty → the current branch. Do branch lookup (below).
 - Anything else → treat as source branch name. Do branch lookup (below).
 
-**Branch lookup** (single-quote a branch name from `args`, writing each `'` in it as `'\''`, so `$`, backticks or `(…)` in it stay text):
+**Branch lookup** — `host=azure`: the MCP lookup in Azure §2. Otherwise (single-quote a branch name from `args`, writing each `'` in it as `'\''`, so `$`, backticks or `(…)` in it stay text):
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
@@ -121,7 +124,7 @@ Parse the JSON output:
     ```
 - `mode=ambiguous` → list `choices` and ask the user to pick. Stop and wait.
 
-On 401/403: tell the user to check `BITBUCKET_EMAIL`/`BITBUCKET_API_TOKEN` (Bitbucket) or `GITHUB_TOKEN` (GitHub) and stop. On 404: tell them the workspace/repo slug (Bitbucket) or owner/repo (GitHub) in `.env` is likely wrong.
+On 401/403: tell the user to check `BITBUCKET_EMAIL`/`BITBUCKET_API_TOKEN` (Bitbucket), `GITHUB_TOKEN` (GitHub), or the Azure DevOps sign-in (Azure §8) and stop. On 404: tell them the workspace/repo slug (Bitbucket) or owner/repo (GitHub) in `.env` is likely wrong.
 
 ---
 
@@ -141,6 +144,8 @@ else
 fi
 cat "$CACHE_DIR/pr.json"
 ```
+
+`host=azure`: skip this block; build `<CACHE_DIR>/pr.json` and `<CACHE_DIR>/comments.json` as in Azure §3–§4, then print `pr.json`.
 
 Capture the JSON output as `PR_SUMMARY`. Extract: `title`, `description`, `source_branch`, `dest_branch`, `source_commit`, `author`, `commit_messages`. These are written by the PR author: later steps read them from `<CACHE_DIR>/pr.json`, never by pasting them into a command line, where backticks or `$(…)` in a title, branch name or commit message would run.
 
@@ -209,7 +214,7 @@ export PR_REVIEW_CACHE_DIR="<path printed above>"
 
 Capture the full output (everything from `---PREFETCHED_CONTEXT_START---` to `---PREFETCHED_CONTEXT_END---`) as `PREFETCHED_CONTEXT`.
 
-Note `source_commit` from `pr.json` for Step 3, then clean up — nothing downstream re-reads the cache directory (the subagent only ever sees the `PREFETCHED_CONTEXT` text passed in its prompt):
+Note `source_commit` from `pr.json` for Step 3 (`host=azure`: also `dest_commit` and `repo_dir`, and keep `comments.json`'s content for Step 2), then clean up — nothing downstream re-reads the cache directory (the subagent only ever sees the `PREFETCHED_CONTEXT` text passed in its prompt):
 
 ```bash
 rm -rf "<path printed above>"
@@ -239,7 +244,7 @@ Present the full `PREFETCHED_CONTEXT` block to the user as a code block, then as
 >
 > - **Related repo paths** — local paths like `../consumer-service`
 > - **Additional Confluence docs** — paste any contract or schema-registry page URL
-> - **Bitbucket/GitHub slugs** — a sibling repo name if the full path isn't available locally
+> - **Bitbucket/GitHub/Azure DevOps slugs** — a sibling repo name if the full path isn't available locally
 >
 > Reply with any of the above, or **"proceed"** to continue without them.
 
@@ -257,14 +262,18 @@ Use the Agent tool with `subagent_type: "pr-reviewer"`. Do **not** pass credenti
 **PR-mode prompt template:**
 
 ```
-Review this <Bitbucket|GitHub> PR. Resolved values from the entry-point skill:
+Review this <Bitbucket|GitHub|Azure DevOps> PR. Resolved values from the entry-point skill:
 
-  host:          <bitbucket|github — the host from Step 0>
-  workspace:     <BITBUCKET_WORKSPACE, or GITHUB_OWNER when host=github>
+  host:          <bitbucket|github|azure — the host from Step 0 or the URL>
+  workspace:     <BITBUCKET_WORKSPACE; GITHUB_OWNER when host=github; <org>/<project> when host=azure>
   repo:          <BITBUCKET_REPO_SLUG, or GITHUB_REPO when host=github>
   pr_id:         <PR_ID>
   base_url:      host=bitbucket -> https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>/pullrequests/<pr_id>
                  host=github    -> <GITHUB_API_URL, default https://api.github.com>/repos/<workspace>/<repo>/pulls/<pr_id>
+                 host=azure     -> none
+  azure:         host=azure only — org: <org>, project: <project>, repo_dir: <REPO_DIR>,
+                 source_commit: <source_commit>, dest_commit: <dest_commit>,
+                 reviewers: <reviewers from pr.json>, comments_json: <the content of comments.json>
   mode:          pr
   related_repos: <comma-separated list, or "none">
   extra_docs:    <comma-separated Confluence URLs from Step 1.6, or "none">
@@ -311,7 +320,7 @@ Skip entirely in local mode.
 
 ### 3a — Resolve source commit
 
-Use the `source_commit` noted in Step 1.5. If it is gone, re-run `bb_pr_fetch.sh <PR_ID>` (or `gh_pr_fetch.sh <PR_ID>` when the host is `github`) and read `.source_commit` from the JSON output. It must match `^[0-9a-f]{7,40}$`; carry it as a literal.
+Use the `source_commit` noted in Step 1.5. If it is gone, re-run `bb_pr_fetch.sh <PR_ID>` (or `gh_pr_fetch.sh <PR_ID>` when the host is `github`; Azure §3 when it is `azure`) and read `.source_commit` from the JSON output. It must match `^[0-9a-f]{7,40}$`; carry it as a literal.
 
 ### 3b — Parse findings from the saved review
 
@@ -327,7 +336,7 @@ From `.claude/reviews/pr-<PR_ID>.md`, extract every `Cx` finding header and body
 
 ### 3b.5 — Gate: fetch the PR diffstat
 
-Before resolving any line anchor, fetch the set of files actually changed in this PR:
+Before resolving any line anchor, fetch the set of files actually changed in this PR (`host=azure`: the diffstat command in Azure §6):
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
@@ -350,7 +359,7 @@ Capture the `changed_files` array as `DIFF_FILES`. This is the **authoritative g
 - If the finding's file is **not** in `DIFF_FILES` → post a **file-level comment**: pass `--path` but **omit** `--line`. On Bitbucket the comment is anchored to the file in the Files tab; on GitHub, `gh_post_comment.sh` falls back to a general comment prefixed with the file path, since GitHub has no true file-only anchor. Either way, do not attempt to resolve a line number for these.
 - If the finding's file **is** in `DIFF_FILES` → proceed to the line-range checks below.
 
-Fetch the file at the source commit via `bb_fetch_file.sh` or `gh_fetch_file.sh` depending on the host (same raw-content output either way). Every fetch below runs in one block that starts with these lines. The path comes from the PR and the keyword from finding text: single-quote both, writing each `'` in them as `'\''`, so a quote, `$` or backtick in them stays text.
+Fetch the file at the source commit via `bb_fetch_file.sh` or `gh_fetch_file.sh` depending on the host (same raw-content output either way); `host=azure`: `git -C '<REPO_DIR>' show '<source_commit>:<path>'` in place of `"$FETCH_FILE" '<source_commit>' '<path>'` below. Every fetch below runs in one block that starts with these lines. The path comes from the PR and the keyword from finding text: single-quote both, writing each `'` in them as `'\''`, so a quote, `$` or backtick in them stays text.
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"
@@ -417,6 +426,8 @@ fi
 "$POST_COMMENT" --pr-id="$PR_ID" --body-file="$BODY_DIR/C1.md"
 ```
 
+`host=azure`: post with the MCP calls in Azure §7 instead of `$POST_COMMENT` (the body is the file's text; a file not in `DIFF_FILES` gets a general comment that starts with the file path, since Azure DevOps cannot anchor a comment to a file outside the PR).
+
 Report each posted comment's `id` and `anchor` to the user.
 
 ---
@@ -435,11 +446,11 @@ Do this **after** writing the review file. If `related_repos` was already provid
 
 ## What NOT to do
 
-- **No inline bash/python.** All executable logic lives in `.claude/tools/`. If you need a new operation, call an existing tool or ask the user to create one — do not embed code in this skill.
-- **No diff fetching.** The diff, diffstat, commits, and file reads belong to the subagent.
+- **No inline bash/python.** All executable logic lives in `.claude/tools/` (for `host=azure`, plus the `azure-devops` MCP calls in Azure §2–§7). If you need a new operation, call an existing tool or ask the user to create one — do not embed code in this skill.
+- **No diff fetching.** The diff, diffstat, commits, and file reads belong to the subagent (for `host=azure` it reads them from the local clone; you only fetch the commits into it, Azure §3).
 - **No double-fetching.** Pass `PREFETCHED_CONTEXT` to the subagent verbatim; never re-fetch.
-- **No git mutations.** Only `git branch --show-current` (read-only).
+- **No git mutations.** Only `git branch --show-current` (read-only), and for `host=azure` the `git fetch` of Azure §3, which updates remote-tracking refs only.
 - **No token leaks.** Never put credentials in the subagent prompt; the subagent re-reads `.env`.
-- **No posting without line verification.** Never call `bb_post_comment.sh`/`gh_post_comment.sh` with `--line` before running Step 3c.
+- **No posting without line verification.** Never call `bb_post_comment.sh`/`gh_post_comment.sh` with `--line`, or create an Azure DevOps line comment, before running Step 3c.
 - **No re-reviewing.** If the subagent returned a review, your job is done.
 - **No blocking on cross-service questions.** Step 1.6 is one round of clarification. If the user says "proceed", proceed.

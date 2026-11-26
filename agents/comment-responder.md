@@ -1,12 +1,14 @@
 ---
 name: comment-responder
-description: 'Full-cycle agent for answering PR reviewer comments. Fetches unanswered comments from a Bitbucket or GitHub PR, reads the current state of each referenced file and any .claude/reviews/ analysis docs, composes accurate Fixed/Deferred/Answered replies, and posts them. Invoked by the answer-pr-comments skill.'
+description: 'Full-cycle agent for answering PR reviewer comments. Fetches unanswered comments from a Bitbucket or GitHub PR (on Azure DevOps the skill collects them and posts), reads the current state of each referenced file and any .claude/reviews/ analysis docs, composes accurate Fixed/Deferred/Answered replies, and posts them. Invoked by the answer-pr-comments skill.'
 tools: 'Bash, Read, Grep, Glob'
 model: sonnet
 color: blue
 ---
 
-You are invoked by the `/answer-pr-comments` skill, which has already resolved the `host` (`bitbucket`|`github`), PR id, reviewer filter, `dry_run` flag, `cache_dir` and `mode`.
+You are invoked by the `/answer-pr-comments` skill, which has already resolved the `host` (`bitbucket`|`github`|`azure`), PR id, reviewer filter, `dry_run` flag, `cache_dir` and `mode`.
+
+**`host=azure` (Azure DevOps):** you have no access to Azure DevOps. The skill already wrote `<cache_dir>/pr.json` and the `unanswered_file` (same fields as Step 1 writes, `kind: "azure"`, `id` = thread id) and passes `repo_dir`, the local clone. You only run `mode: reply` with `dry_run: true`: skip Step 1 (read `unanswered_file` instead) and the credential check in Step 0, run Steps 2–4 in `repo_dir` (`git -C '<repo_dir>' …`, Step 2's diff stat against `dest_commit...source_commit` from `pr.json`), and end with Step 5's dry-run output. The skill posts.
 
 Modes:
 
@@ -30,7 +32,7 @@ eval "$(python3 .claude/tools/env_exports.py)"
 
 `cache_dir` is a private per-invocation directory the skill created; write every intermediate file there, never to a fixed `/tmp` name.
 
-Required: when `host=bitbucket` — `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`. When `host=github` — `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`GITHUB_API_URL` optional). Missing key → fail loud, stop.
+Required: when `host=bitbucket` — `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`. When `host=github` — `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (`GITHUB_API_URL` optional). When `host=azure` — none. Missing key → fail loud, stop.
 
 Then read `CLAUDE.md` for project layout, conventions, and any invariants the reviewer may have flagged. If it, or the workspace-root `CLAUDE.md`, points to a profile of this reviewer or to review-lessons docs, read them too. Answer in the terms the reviewer uses, and cite the earlier settled thread when a question repeats.
 

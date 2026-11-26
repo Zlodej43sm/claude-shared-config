@@ -35,6 +35,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import unquote
 
 BITBUCKET_KEYS = (
     "BITBUCKET_WORKSPACE",
@@ -46,6 +47,27 @@ GITHUB_KEYS = (
     "GITHUB_OWNER",
     "GITHUB_REPO",
     "GITHUB_TOKEN",
+)
+AZURE_KEYS = (  # token optional: without AZURE_DEVOPS_PAT the MCP server signs in through the browser
+    "AZURE_DEVOPS_ORG",
+    "AZURE_DEVOPS_PROJECT",
+    "AZURE_DEVOPS_REPO",
+)
+AZURE_URL_KEY = "AZURE_DEVOPS_URL"  # an org, project or repo URL; fills the AZURE_KEYS left unset
+# Web URLs down to any level: https://dev.azure.com/<org>[/<project>[/_git[/<repo>]]],
+# https://<org>.visualstudio.com[/DefaultCollection][/<project>[/_git[/<repo>]]].
+AZURE_WEB_URL = (
+    re.compile(r"^https?://(?:[^@/\s]+@)?dev\.azure\.com/([^/?#\s]+)(?:/([^/?#\s]+))?(?:/_git(?:/([^/?#\s]+))?)?"),
+    re.compile(r"^https?://(?:[^@/\s]+@)?([^./\s]+)\.visualstudio\.com(?:/DefaultCollection)?(?:/([^/?#\s]+))?(?:/_git(?:/([^/?#\s]+))?)?"),
+)
+# Azure DevOps remotes: ssh.dev.azure.com:v3/<org>/<project>/<repo>,
+# https://[user@]dev.azure.com/<org>/<project>/_git/<repo>,
+# https://<org>.visualstudio.com/[DefaultCollection/]<project>/_git/<repo>,
+# <org>@vs-ssh.visualstudio.com:v3/<org>/<project>/<repo>.
+AZURE_REMOTE = (
+    re.compile(r"(?:ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com):v3/([^/\s]+)/([^/\s]+)/([^/\s]+?)(?:\.git)?/?$"),
+    re.compile(r"dev\.azure\.com/([^/\s]+)/([^/\s]+)/_git/([^/\s?#]+?)(?:\.git)?/?(?:[?#].*)?$"),
+    re.compile(r"//(?:[^@/\s]+@)?([^./\s]+)\.visualstudio\.com/(?:DefaultCollection/)?([^/\s]+)/_git/([^/\s?#]+?)(?:\.git)?/?(?:[?#].*)?$"),
 )
 JIRA_KEYS = (
     "JIRA_WORKSPACE",
@@ -116,15 +138,55 @@ def gh_auth_token() -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def origin_url(cwd: str | None = None) -> str:
+    try:
+        return subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True,
+                              text=True, timeout=5, cwd=cwd).stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+
+
 def github_remote_slug() -> tuple[str, str] | None:
     """(owner, repo) parsed from the origin URL when it points at github.com."""
-    try:
-        url = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True,
-                             text=True, timeout=5).stdout.strip()
-    except (subprocess.TimeoutExpired, OSError):
-        return None
-    m = re.search(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", url)
+    m = re.search(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", origin_url())
     return (m.group(1), m.group(2)) if m else None
+
+
+def azure_remote_slug(url: str) -> tuple[str, str, str] | None:
+    """(org, project, repo) of an Azure DevOps git URL (remote or web), URL-decoded,
+    e.g. ("MyOrg", "My Project", "api") for ssh.dev.azure.com:v3/MyOrg/My%20Project/api."""
+    for pattern in AZURE_REMOTE:
+        m = pattern.search(url)
+        if m:
+            return tuple(unquote(part) for part in m.groups())  # type: ignore[return-value]
+    return None
+
+
+def azure_url_parts(url: str) -> tuple[str, str, str]:
+    """(org, project, repo) of an Azure DevOps web URL at any level, URL-decoded; parts
+    the URL doesn't reach are "". Repo URLs and remotes also go through azure_remote_slug."""
+    url = url.strip()
+    slug = azure_remote_slug(url)
+    if slug:
+        return slug
+    for pattern in AZURE_WEB_URL:
+        m = pattern.search(url)
+        if m:
+            org, project, repo = (unquote(g or "") for g in m.groups())
+            project = "" if project.startswith("_") else project  # /_settings, /_git without a project
+            return org, project, repo.removesuffix(".git")
+    return "", "", ""
+
+
+def azure_settings(env: dict[str, str], cwd: str | None = None) -> dict[str, str]:
+    """AZURE_DEVOPS_ORG / _PROJECT / _REPO, each from the first source that has it:
+    the key itself, then AZURE_DEVOPS_URL, then the origin remote (cwd). Missing → ""."""
+    sources = [
+        tuple(env.get(k, "").strip() if usable_secret(env.get(k, "")) else "" for k in AZURE_KEYS),
+        azure_url_parts(env.get(AZURE_URL_KEY, "")),
+        azure_remote_slug(origin_url(cwd)) or ("", "", ""),
+    ]
+    return {key: next((src[i] for src in sources if src[i]), "") for i, key in enumerate(AZURE_KEYS)}
 
 
 def warn(msg: str) -> None:
@@ -138,32 +200,29 @@ def looks_like_placeholder(value: str) -> bool:
 
 def detect_git_host(env: dict[str, str]) -> str | None:
     """Mirrors tools/detect_git_host.sh: explicit GIT_HOST override, then the
-    origin remote URL, then whichever of BITBUCKET_WORKSPACE/GITHUB_OWNER is
-    the only one populated. Returns None if undeterminable (caller warns)."""
+    origin remote URL, then whichever of BITBUCKET_WORKSPACE/GITHUB_OWNER is the
+    only one populated, then azure when AZURE_DEVOPS_ORG or AZURE_DEVOPS_URL is (a
+    workspace root may hold GitHub and Azure DevOps repos: the Azure keys there only
+    turn on the azure-devops server and the PR skills take the host from a PR URL).
+    Returns None if undeterminable (caller warns)."""
     override = env.get("GIT_HOST", "").strip().lower()
-    if override in ("bitbucket", "github"):
+    if override in ("bitbucket", "github", "azure"):
         return override
 
-    try:
-        result = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        remote_url = result.stdout.strip()
-    except (subprocess.TimeoutExpired, OSError):
-        remote_url = ""
-
+    remote_url = origin_url()
     if "bitbucket.org" in remote_url:
         return "bitbucket"
     if "github.com" in remote_url:
         return "github"
+    if "dev.azure.com" in remote_url or ".visualstudio.com" in remote_url:
+        return "azure"
 
-    if env.get("BITBUCKET_WORKSPACE") and not env.get("GITHUB_OWNER"):
-        return "bitbucket"
-    if env.get("GITHUB_OWNER") and not env.get("BITBUCKET_WORKSPACE"):
-        return "github"
+    signals = {"bitbucket": "BITBUCKET_WORKSPACE", "github": "GITHUB_OWNER"}
+    populated = [host for host, key in signals.items() if env.get(key)]
+    if len(populated) == 1:
+        return populated[0]
+    if not populated and (env.get("AZURE_DEVOPS_ORG") or env.get(AZURE_URL_KEY)):
+        return "azure"
     return None
 
 
@@ -176,6 +235,9 @@ def unused_mcp_servers(host: str | None, env: dict[str, str]) -> set[str]:
       - github only when the git host is github (its token may come from `gh auth
         login`, see main()); Bitbucket has no MCP server — the PR skills use
         tools/bb_*.sh.
+      - azure-devops when the git host is azure or an Azure DevOps org is known from
+        AZURE_DEVOPS_ORG / AZURE_DEVOPS_URL (a workspace root that is not a repo but
+        reviews Azure DevOps PRs); AZURE_DEVOPS_PAT if set, else browser sign-in.
       - figma and playwright (the design-spec / design-build servers) only with
         DESIGN_MCP=on: most projects never use them, and playwright starts a
         browser server at every session start.
@@ -183,6 +245,8 @@ def unused_mcp_servers(host: str | None, env: dict[str, str]) -> set[str]:
     unused: set[str] = set()
     if host != "github":
         unused.add("github")
+    if host != "azure" and not azure_settings(env)["AZURE_DEVOPS_ORG"]:
+        unused.add("azure-devops")
     unused.add("atlassian-oauth" if all(usable_secret(env.get(k, "")) for k in JIRA_CREDENTIAL_KEYS) else "atlassian")
     if env.get("NOTION_MCP", "").strip().lower() == "off":
         unused |= {"notion", "notion-oauth"}
@@ -343,13 +407,21 @@ def main() -> int:
         required_keys = BITBUCKET_KEYS + JIRA_KEYS
     elif host == "github":
         required_keys = GITHUB_KEYS + JIRA_KEYS
+    elif host == "azure":
+        required_keys = AZURE_KEYS[:1] + JIRA_KEYS  # project/repo also come from a PR URL
     else:
         warn(
-            "could not determine git host (set GIT_HOST=bitbucket|github, or "
-            "populate BITBUCKET_WORKSPACE/GITHUB_OWNER); skipping host-specific "
-            "required-key checks"
+            "could not determine git host (set GIT_HOST=bitbucket|github|azure, or "
+            "populate BITBUCKET_WORKSPACE/GITHUB_OWNER/AZURE_DEVOPS_ORG); skipping "
+            "host-specific required-key checks"
         )
         required_keys = JIRA_KEYS
+
+    if host == "azure" or env.get(AZURE_URL_KEY):
+        for key, val in azure_settings(env).items():
+            if val and not usable_secret(env.get(key, "")):
+                env[key] = val
+                warn(f"{key} not set — using {val!r} from {AZURE_URL_KEY} or the origin remote")
 
     if host == "github":
         slug = github_remote_slug()

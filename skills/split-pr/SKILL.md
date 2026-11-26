@@ -40,7 +40,7 @@ The combined text gets threaded into every classification agent's prompt (Step 3
 
 ## Step 1 — Resolve target and scope
 
-Resolve `BASE_REF`/`HEAD_REF` per the Input section. If `<pr-identifier>` is a PR number or URL and hosting credentials are configured (`.claude/.env`), resolve the host with `.claude/tools/detect_git_host.sh` (or the URL's own domain, if `<pr-identifier>` is a full PR URL — that always wins) and use `bb_pr_lookup.sh`/`bb_pr_diffstat.sh` (Bitbucket) or `gh_pr_lookup.sh`/`gh_pr_diffstat.sh` (GitHub) to resolve it to a branch; otherwise treat it as a local branch/ref directly — this skill's core analysis only needs two git refs, not a live PR, so a missing or undetected host is never a blocker here.
+Resolve `BASE_REF`/`HEAD_REF` per the Input section. If `<pr-identifier>` is a PR number or URL and hosting credentials are configured (`.claude/.env`), resolve the host with `.claude/tools/detect_git_host.sh` (or the URL's own domain, if `<pr-identifier>` is a full PR URL — that always wins) and use `bb_pr_lookup.sh`/`bb_pr_diffstat.sh` (Bitbucket) or `gh_pr_lookup.sh`/`gh_pr_diffstat.sh` (GitHub), or the `azure-devops` MCP server (Azure DevOps: `pr-review`'s `references/azure-devops.md` §2–§3) to resolve it to a branch; otherwise treat it as a local branch/ref directly — this skill's core analysis only needs two git refs, not a live PR, so a missing or undetected host is never a blocker here.
 
 Shell variables don't survive between commands, and branch names can be PR-author controlled: every block that uses the refs starts by setting them as single-quoted literals, each `'` in a name written as `'\''`, so `$`, backticks or `(…)` in it stay text.
 

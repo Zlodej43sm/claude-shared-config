@@ -69,6 +69,12 @@
       "Bash(.claude/tools/extract_secondary_links.py *)",
       "Bash(python3 .claude/tools/extract_secondary_links.py *)",
       "Bash(python3 -I .claude/tools/extract_secondary_links.py *)",
+      "Bash(.claude/tools/azure_repo.py *)",
+      "Bash(python3 .claude/tools/azure_repo.py *)",
+      "mcp__azure-devops__repo_pull_request",
+      "mcp__azure-devops__repo_pull_request_thread",
+      "mcp__azure-devops__repo_file",
+      "mcp__azure-devops__repo_repository",
       "Bash(.claude/tools/pr_line_links.py *)",
       "Bash(python3 .claude/tools/pr_line_links.py *)",
       "Bash(python3 -I .claude/tools/pr_line_links.py *)",
@@ -86,6 +92,7 @@
     "ask": [
       "Bash(*bb_post_comment.sh*)",
       "Bash(*gh_post_comment.sh*)",
+      "mcp__azure-devops__repo_pull_request_thread_write",
       "Bash(*jira_create_child.sh*)",
       "Bash(*mcp-run.py*)",
       "Bash(*env_exports.py*--value*)",
@@ -95,6 +102,9 @@
       "Read(./.claude/settings.local.json)"
     ],
     "deny": [
+      "mcp__azure-devops__repo_file_write",
+      "mcp__azure-devops__repo_create_branch",
+      "mcp__azure-devops__repo_pull_request_write",
       "Bash(*.claude/tools/..*)",
       "Bash(git * --output*)",
       "Bash(git diff *--no-index*)",

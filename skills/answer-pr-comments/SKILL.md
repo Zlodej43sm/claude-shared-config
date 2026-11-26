@@ -1,6 +1,6 @@
 ---
 name: answer-pr-comments
-description: Answer unanswered human reviewer comments on a Bitbucket or GitHub PR. By default composes replies (delegated to the comment-responder agent), shows them and posts after one confirmation; with --fix it also verifies each comment against the code, fixes what is valid, argues with evidence what is not, runs the project's checks, and posts the replies after one confirmation. Usage: /answer-pr-comments <pr-number> [<reviewer-name>] [--dry-run] [--fix]
+description: Answer unanswered human reviewer comments on a Bitbucket, GitHub or Azure DevOps PR. By default composes replies (delegated to the comment-responder agent), shows them and posts after one confirmation; with --fix it also verifies each comment against the code, fixes what is valid, argues with evidence what is not, runs the project's checks, and posts the replies after one confirmation. Usage: /answer-pr-comments <pr-number | azure-devops-pr-url> [<reviewer-name>] [--dry-run] [--fix]
 ---
 
 # answer-pr-comments
@@ -9,6 +9,7 @@ Entry point. Validates credentials, resolves the git host and PR number, then ei
 
 - **reply mode** (default): the `comment-responder` agent researches and composes the replies; you show them and ask once; the agent posts what the user approved. Do **not** fetch comments, read files, compose replies, or post to Bitbucket/GitHub yourself.
 - **fix mode** (`--fix`): the agent only *collects* the unanswered comments and later *posts* the replies; you (the main loop, which has Edit/Write) triage, fix and verify in between. See "Fix mode" below.
+- **Azure DevOps (`host=azure`)**: the agent cannot reach Azure DevOps (no MCP access), so you collect the comments and post the replies through the `azure-devops` MCP server, following [`../pr-review/references/azure-devops.md`](../pr-review/references/azure-devops.md) (cited below as *Azure §N*). The agent only researches and composes, as in any `dry_run: true` run.
 
 ---
 
@@ -18,7 +19,7 @@ Entry point. Validates credentials, resolves the git host and PR number, then ei
 <pr-number> [<reviewer-name>] [--dry-run] [--fix]
 ```
 
-- `<pr-number>` — required. Bare integer (`48`) or `#48`.
+- `<pr-number>` — required. Bare integer (`48`) or `#48`; on Azure DevOps also a PR URL (`https://dev.azure.com/<org>/<project>/_git/<repo>/pullrequest/<id>`), which sets the host to `azure`.
 - `<reviewer-name>` — optional. Case-insensitive substring of `display_name` (e.g. `"Jane"` matches `"Jane Doe"`). Omit to reply to all human reviewers.
 - `--dry-run` — show the proposed replies and stop; nothing is posted and no question is asked. With `--fix` it means: do the triage, edits and checks, show the replies, but do not commit, push or post.
 - `--fix` — address the comments instead of only replying: fix valid ones in the working tree, push back on invalid ones with evidence. Requires the PR's source branch to be checked out.
@@ -36,15 +37,17 @@ echo "HOST=$HOST CACHE_DIR=$CACHE_DIR"
 
 Shell variables don't survive between commands: carry the printed host and cache path as literals. `<CACHE_DIR>` below is that path, and a later block that tests the host starts with `HOST="<host printed above>"`.
 
-If `detect_git_host.sh` failed (empty host), tell the user to set `GIT_HOST=bitbucket` or `GIT_HOST=github` in `.claude/.env` and stop.
+An Azure DevOps PR URL in args sets `HOST=azure`. Otherwise, if `detect_git_host.sh` failed (empty host), tell the user to set `GIT_HOST=bitbucket`, `GIT_HOST=github` or `GIT_HOST=azure` in `.claude/.env` and stop.
 
-Required: when the host is `bitbucket` — `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`. When it is `github` — `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN`.
+Required: when the host is `bitbucket` — `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`. When it is `github` — `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN`. When it is `azure` — no key; check Azure §1 (MCP server, local clone).
 
 If any key is missing or a placeholder, tell the user which key to fix and **stop**. Do not spawn the agent on missing creds.
 
 ---
 
 ## Step 1 — Resolve PR number
+
+`host=azure`: resolve org, project, repo, PR id and the clone `REPO_DIR` as in Azure §2 (a URL, a number, or the branch lookup there); then skip the rest of this step.
 
 Parse `<pr-number>` from args (strip leading `#`). If args is empty, look up the open PR for the current branch via the host-appropriate lookup tool:
 
@@ -73,13 +76,15 @@ On 401/403 → stop, tell the user to check `BITBUCKET_EMAIL`/`BITBUCKET_API_TOK
 
 With `--fix`, skip to "Fix mode" below. Otherwise use the Agent tool with `subagent_type: "comment-responder"`. The agent fetches the comments, filters them, reads the code and composes the replies into `<CACHE_DIR>/cr_replies_<pr>.json`, without posting (`dry_run: true`). Do **not** pass tokens in the prompt.
 
+`host=azure`: first write `<CACHE_DIR>/pr.json` and `<CACHE_DIR>/cr_unanswered_<pr>.json` yourself (Azure §3–§5). If the list is empty, report that and stop. Add the `azure` line below to the prompt.
+
 **Prompt template:**
 
 ```
-Answer unanswered reviewer comments on a <Bitbucket|GitHub> PR.
+Answer unanswered reviewer comments on a <Bitbucket|GitHub|Azure DevOps> PR.
 
-  host:            <bitbucket|github — the host from Step 0>
-  workspace:       <BITBUCKET_WORKSPACE, or GITHUB_OWNER when host=github>
+  host:            <bitbucket|github|azure — the host from Step 0 or the URL>
+  workspace:       <BITBUCKET_WORKSPACE; GITHUB_OWNER when host=github; <org>/<project> when host=azure>
   repo:            <BITBUCKET_REPO_SLUG, or GITHUB_REPO when host=github>
   pr_id:           <PR_ID>
   reviewer_filter: <REVIEWER_NAME or empty>
@@ -87,11 +92,12 @@ Answer unanswered reviewer comments on a <Bitbucket|GitHub> PR.
   project_root:    <absolute path to repo root>
   cache_dir:       <CACHE_DIR>
   mode:            reply
+  azure:           host=azure only — repo_dir: <REPO_DIR>, unanswered_file: <CACHE_DIR>/cr_unanswered_<pr>.json
 
 Run your full procedure (Steps 0–5) and return your completion summary as your final message.
 ```
 
-Show the agent's proposed replies. With `--dry-run`, stop here. Otherwise ask one question: post all, post some (the user names which), or post none. Then spawn the agent again with the same prompt but `mode: post`, `dry_run: false` and `replies_file: <CACHE_DIR>/cr_replies_<pr>.json`, after removing any reply the user did not approve from that file. Surface its final message verbatim.
+Show the agent's proposed replies. With `--dry-run`, stop here. Otherwise ask one question: post all, post some (the user names which), or post none. Then spawn the agent again with the same prompt but `mode: post`, `dry_run: false` and `replies_file: <CACHE_DIR>/cr_replies_<pr>.json`, after removing any reply the user did not approve from that file. Surface its final message verbatim. `host=azure`: post the approved replies yourself instead, one `reply` per thread (Azure §7), and report the posted count and any failure.
 
 ---
 
@@ -107,6 +113,8 @@ git status --porcelain             # uncommitted changes: tell the user before e
 git fetch -q origin && git rev-list --left-right --count 'HEAD...origin/<source-branch>'   # behind > 0: stop and say so
 ```
 
+`host=azure`: run these, and every later git command and edit, in `REPO_DIR` (`git -C '<REPO_DIR>' …`).
+
 The branch name is the PR author's: keep it inside the single quotes, writing each `'` in it as `'\''`, so `$`, backticks or `(…)` in it stay text.
 
 Fix on the source branch as it is. Never merge or rebase the destination (or any other branch) into it, even when the destination moved and its text overlaps the lines you fix: tell the user about the overlap instead. A pushed merge is not undone with `git revert -m 1` (in a stacked PR that deletes the base's changes from the diff); rebuild the branch without it and force-push only after the user agrees.
@@ -115,7 +123,7 @@ Read the project `CLAUDE.md` / contributing docs for the checks to run (typechec
 
 ### F1 — Collect
 
-Spawn the `comment-responder` agent with the Step 2 prompt but `mode: collect` (and `dry_run: true`). It writes `<CACHE_DIR>/cr_unanswered_<pr>.json` (id, kind, author, file, line, text, thread). Read that file. If it is empty, report that and stop.
+Spawn the `comment-responder` agent with the Step 2 prompt but `mode: collect` (and `dry_run: true`). It writes `<CACHE_DIR>/cr_unanswered_<pr>.json` (id, kind, author, file, line, text, thread). `host=azure`: write that file yourself (Azure §3–§5) instead of spawning the agent. Read that file. If it is empty, report that and stop.
 
 ### F2 — Triage: verify before acting
 
@@ -168,7 +176,7 @@ Show: the triage table, the check results, the `git diff --stat`, and every prop
 On approval:
 
 1. Commit in the repository's message style (follow the attribution instruction in the session) and push the PR's branch. Never force-push, never amend published commits, never touch another branch.
-2. Spawn the agent with `mode: post` and `replies_file: <CACHE_DIR>/replies.json`. If the user approved only part of it, post only that part.
+2. Spawn the agent with `mode: post` and `replies_file: <CACHE_DIR>/replies.json` (`host=azure`: post them yourself, Azure §7). If the user approved only part of it, post only that part.
 3. Report: what was fixed, what was declined and why, what was deferred and where it must be followed up (other repos, tickets, decisions), and anything the checks could not cover.
 4. Lessons: if a valid comment shows an expectation that no shared skill covers (for docs `doc-review`, for backend code `backend-implementation`), propose a generic rule for that skill's "Learning from reviewers" step in the report. Edit the skill only if the user agrees. If the project keeps reviewer profiles or review-lessons docs (the repo or workspace-root `CLAUDE.md` points to them), record this round there as the project's own procedure says: each comment with its verified status, plus any new question or review habit in that reviewer's profile.
 
@@ -213,6 +221,7 @@ When you (the main loop, not the agent) fix code in response to a reviewer comme
         ```bash
         .claude/tools/gh_post_comment.sh --pr-id={pr_id} --reply-to=<PARENT_COMMENT_ID> --body-file="<CACHE_DIR>/reply.md"
         ```
+    - **Azure DevOps** — `repo_pull_request_thread_write` `reply` into the original thread (Azure §7), with the text of `reply.md`. Find the thread id with the thread list in Azure §4.
     - **GitHub, original was a general issue comment** — GitHub has no threading for issue-level comments, so there is no true "reply". Start `reply.md` with the first ~80 characters of the original comment as a `> ` quote, then a blank line, then the reply, and post it as a new general comment; tell the user this is a best-effort thread, not a native GitHub reply:
         ```bash
         .claude/tools/gh_post_comment.sh --pr-id={pr_id} --body-file="<CACHE_DIR>/reply.md"
@@ -222,7 +231,7 @@ When you (the main loop, not the agent) fix code in response to a reviewer comme
 
 ## Constraints
 
-- **One PR-lookup call max.** The branch-to-PR lookup tool call in Step 1 is the only API call the skill itself makes. All fetching and posting belongs to the agent (Step 2, or Fix mode's `collect` and `post`) or uses the threaded pattern above (Step 3).
+- **One PR-lookup call max.** The branch-to-PR lookup tool call in Step 1 is the only API call the skill itself makes. All fetching and posting belongs to the agent (Step 2, or Fix mode's `collect` and `post`) or uses the threaded pattern above (Step 3). Exception: on Azure DevOps you make the collect and post calls through the MCP server, since the agent cannot.
 - **Nothing outward without confirmation.** Reply mode posts only after Step 2's question; fix mode commits, pushes and posts once, after F6's single approval; a Step 3 follow-up posts after the user confirms it. Never force-push; never edit another repository.
-- **Always thread replies.** Never post a follow-up as a bare top-level comment — Bitbucket via `--parent`, GitHub inline comments via `--reply-to` (the `/replies` endpoint), GitHub issue comments via an explicit quote of the original (GitHub's closest equivalent, since issue comments have no native threading).
+- **Always thread replies.** Never post a follow-up as a bare top-level comment — Bitbucket via `--parent`, GitHub inline comments via `--reply-to` (the `/replies` endpoint), GitHub issue comments via an explicit quote of the original (GitHub's closest equivalent, since issue comments have no native threading), Azure DevOps via a `reply` into the thread.
 - **No token leaks.** Never echo, log, or include tokens in the agent prompt.

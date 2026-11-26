@@ -4,15 +4,20 @@
 # SCHEMA_IN
 #   env GIT_HOST (optional)  BITBUCKET_WORKSPACE  BITBUCKET_REPO_SLUG  BITBUCKET_EMAIL  BITBUCKET_API_TOKEN
 #   env GITHUB_OWNER  GITHUB_REPO  GITHUB_TOKEN  GITHUB_API_URL (optional)
+#   env AZURE_DEVOPS_ORG  AZURE_DEVOPS_PROJECT  AZURE_DEVOPS_REPO  AZURE_DEVOPS_URL (azure;
+#       each key falls back to AZURE_DEVOPS_URL, then the origin remote)
 #   reads .mcp.json and .claude/settings.local.json under $CLAUDE_PROJECT_DIR (or cwd)
-#   to report whether the github MCP server is present and enabled
+#   to report whether the host's MCP server (github / azure-devops) is present and enabled
 #
 # SCHEMA_OUT  stdout JSON
-#   { "host": "bitbucket"|"github"|null,
+#   { "host": "bitbucket"|"github"|"azure"|null,
 #     "env":  { "missing": [KEY...], "placeholder": [KEY...], "unresolved_op": [KEY...] },
 #     "api":  { "checked": bool, "status": int|null, "ok": bool, "detail": string },
-#     "mcp":  { "file": bool, "expected": "github"|null, "configured": bool } }
+#     "mcp":  { "file": bool, "expected": "github"|"azure-devops"|null, "configured": bool } }
 #   Never prints a credential value. Read-only (one GET against the repo endpoint).
+#   Azure DevOps: no API check here (the azure-devops MCP server signs in through the
+#   browser and holds no token this script could use) — api.checked is false and
+#   api.ok follows the env check; the caller tests the MCP server with a live read.
 #
 # EXIT  0=connected  1=problem (see JSON)  2=host undeterminable
 
@@ -20,10 +25,10 @@ set -uo pipefail
 
 TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOST=$("$TOOLS_DIR/detect_git_host.sh" 2>/dev/null) || {
-  echo '{"host":null,"env":{"missing":[],"placeholder":[],"unresolved_op":[]},"api":{"checked":false,"status":null,"ok":false,"detail":"git host undeterminable - set GIT_HOST=bitbucket|github"},"mcp":{"file":false,"expected":null,"configured":false}}'
+  echo '{"host":null,"env":{"missing":[],"placeholder":[],"unresolved_op":[]},"api":{"checked":false,"status":null,"ok":false,"detail":"git host undeterminable - set GIT_HOST=bitbucket|github|azure"},"mcp":{"file":false,"expected":null,"configured":false}}'
   exit 2
 }
-export HOST
+export HOST TOOLS_DIR
 
 python3 - <<'PY'
 import base64, json, os, urllib.error, urllib.request
@@ -48,8 +53,22 @@ host = os.environ["HOST"]
 keys = {
     "bitbucket": ["BITBUCKET_WORKSPACE", "BITBUCKET_REPO_SLUG", "BITBUCKET_EMAIL", "BITBUCKET_API_TOKEN"],
     "github": ["GITHUB_OWNER", "GITHUB_REPO", "GITHUB_TOKEN"],
+    "azure": ["AZURE_DEVOPS_ORG", "AZURE_DEVOPS_PROJECT", "AZURE_DEVOPS_REPO"],
 }[host]
 PLACEHOLDERS = ("replace-with-", "your-", "your.name@", "_here")
+
+if host == "azure":
+    # Same resolution as hooks/sync-env.py: each key, else AZURE_DEVOPS_URL, else the origin remote.
+    import importlib.util, sys
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location(
+        "sync_env", Path(os.environ["TOOLS_DIR"]).parent / "hooks" / "sync-env.py")
+    sync_env = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sync_env)
+    for key, val in sync_env.azure_settings(dict(os.environ)).items():
+        if val and not os.environ.get(key):
+            os.environ[key] = val
+    keys = keys[:2]  # the repo comes from a PR URL or the clone; a workspace root has none
 
 missing, placeholder, unresolved = [], [], []
 for k in keys:
@@ -64,6 +83,9 @@ for k in keys:
 api = {"checked": False, "status": None, "ok": False, "detail": ""}
 if missing or placeholder or unresolved:
     api["detail"] = "skipped: fix env keys first"
+elif host == "azure":
+    api["ok"] = True
+    api["detail"] = "no token-based check: test the azure-devops MCP server with a read call"
 else:
     if host == "github":
         base = os.environ.get("GITHUB_API_URL") or "https://api.github.com"
@@ -96,15 +118,17 @@ else:
         api["detail"] = f"network error: {getattr(e, 'reason', e)}"
 
 project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
-# The "github" server ships in mcp.json.template for every project; hooks/sync-env.py
-# disables it (settings.local.json disabledMcpjsonServers) when the host isn't github.
-mcp = {"file": False, "expected": "github" if host == "github" else None, "configured": host != "github"}
+# The "github" and "azure-devops" servers ship in mcp.json.template for every project;
+# hooks/sync-env.py disables each (settings.local.json disabledMcpjsonServers) when the
+# host isn't theirs. Bitbucket has no MCP server.
+expected = {"github": "github", "azure": "azure-devops"}.get(host)
+mcp = {"file": False, "expected": expected, "configured": expected is None}
 mcp_path = project / ".mcp.json"
 if mcp_path.is_file():
     mcp["file"] = True
-    if host == "github":
+    if expected:
         try:
-            in_file = "github" in json.loads(mcp_path.read_text()).get("mcpServers", {})
+            in_file = expected in json.loads(mcp_path.read_text()).get("mcpServers", {})
         except json.JSONDecodeError:
             in_file = False
         disabled = []
@@ -114,7 +138,7 @@ if mcp_path.is_file():
                 disabled = json.loads(local.read_text()).get("disabledMcpjsonServers", [])
             except json.JSONDecodeError:
                 pass
-        mcp["configured"] = in_file and "github" not in disabled
+        mcp["configured"] = in_file and expected not in disabled
 
 print(json.dumps({
     "host": host,

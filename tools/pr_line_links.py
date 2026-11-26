@@ -5,8 +5,9 @@ view ("Files changed") at that line, and say whether the line is in a diff hunk.
 
 SCHEMA_IN
   stdin   unified diff of the PR (GitHub: `Accept: application/vnd.github.v3.diff`,
-          Bitbucket: `${base_url}/diff`)
-  args    --host=github|bitbucket  --owner=<owner|workspace>  --repo=<repo>
+          Bitbucket: `${base_url}/diff`, Azure DevOps: `git diff <dest>...<source commit>`
+          in the local clone)
+  args    --host=github|bitbucket|azure  --owner=<owner|workspace|org/project>  --repo=<repo>
           --pr=<id>  --commit=<head sha>  [--web-base=https://github.com]
           ANCHOR ...    each `path:LINE` or `path:START-END` (new side of the diff)
 
@@ -24,6 +25,9 @@ SCHEMA_OUT  stdout JSON list, one entry per anchor
            file: <web>/<o>/<r>/pull/<id>/changes#diff-<sha256(path)>
   Bitbucket line: https://bitbucket.org/<ws>/<r>/pull-requests/<id>/diff#L<path>T<start>
            file: https://bitbucket.org/<ws>/<r>/pull-requests/<id>/diff#chg-<path>
+  Azure    file: https://dev.azure.com/<org>/<project>/_git/<r>/pullrequest/<id>?_a=files&path=/<path>
+           (the PR view has no line URL, so a line in a hunk also gets the file link;
+           blob_link carries the line: …/_git/<r>?path=/<path>&version=GC<commit>&line=<start>…)
   A range whose END leaves the hunk is cut to the hunk's last line.
 
 EXIT  0=ok  2=bad arguments
@@ -33,7 +37,7 @@ import argparse, hashlib, json, re, sys
 from urllib.parse import quote
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--host", required=True, choices=["github", "bitbucket"])
+parser.add_argument("--host", required=True, choices=["github", "bitbucket", "azure"])
 parser.add_argument("--owner", required=True)
 parser.add_argument("--repo", required=True)
 parser.add_argument("--pr", required=True)
@@ -66,7 +70,14 @@ for line in sys.stdin.read().splitlines():
 web = args.web_base.rstrip("/")
 
 
+def azure_repo_url() -> str:
+    org, _, project = args.owner.partition("/")
+    return f"https://dev.azure.com/{quote(org, safe='')}/{quote(project, safe='')}/_git/{quote(args.repo, safe='')}"
+
+
 def pr_file_link(path: str) -> str:
+    if args.host == "azure":
+        return f"{azure_repo_url()}/pullrequest/{args.pr}?_a=files&path={quote('/' + path, safe='/')}"
     if args.host == "github":
         digest = hashlib.sha256(path.encode()).hexdigest()
         return f"{web}/{args.owner}/{args.repo}/pull/{args.pr}/changes#diff-{digest}"
@@ -74,6 +85,8 @@ def pr_file_link(path: str) -> str:
 
 
 def pr_line_link(path: str, start: int, end: int) -> str:
+    if args.host == "azure":
+        return pr_file_link(path)
     if args.host == "github":
         suffix = f"R{start}" + (f"-R{end}" if end != start else "")
         return pr_file_link(path) + suffix
@@ -81,6 +94,9 @@ def pr_line_link(path: str, start: int, end: int) -> str:
 
 
 def blob_link(path: str, start: int, end: int) -> str:
+    if args.host == "azure":
+        return (f"{azure_repo_url()}?path={quote('/' + path, safe='/')}&version=GC{args.commit}"
+                f"&line={start}&lineEnd={end}&lineStartColumn=1&lineEndColumn=1&lineStyle=plain&_a=contents")
     if args.host == "github":
         lines = f"L{start}" + (f"-L{end}" if end != start else "")
         return f"{web}/{args.owner}/{args.repo}/blob/{args.commit}/{path}#{lines}"

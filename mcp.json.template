@@ -50,6 +50,19 @@
         "ghcr.io/github/github-mcp-server:v2.1.0@sha256:f6056fc10bfffcc8c81a6417a2e9ca12808647e8dd6049642a4feaadee0e0f8a"
       ]
     },
+    "azure-devops": {
+      "command": "python3",
+      "args": [
+        ".claude/tools/mcp-run.py",
+        "--env-b64", "PERSONAL_ACCESS_TOKEN=:{{AZURE_DEVOPS_PAT|}}",
+        "--fallback", "AZURE_DEVOPS_ORG=python3 .claude/tools/azure_repo.py org",
+        "--",
+        "npx", "-y", "--before=2026-11-09T00:00:00Z", "@azure-devops/mcp@2.11.0",
+        "{{AZURE_DEVOPS_ORG}}",
+        "--authentication", "{{AZURE_DEVOPS_PAT?pat:interactive}}",
+        "--domains", "core", "repositories"
+      ]
+    },
     "notion": {
       "command": "python3",
       "args": [

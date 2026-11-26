@@ -1,26 +1,27 @@
 ---
 name: connect-git
-description: Verify and set up this project's git-hosting connection (Bitbucket or GitHub) — resolves which host the project uses, checks the credentials in .claude/.env, tests them against the host API, and confirms the matching MCP server is wired into .mcp.json. Usage: /connect-git
+description: Verify and set up this project's git-hosting connection (Bitbucket, GitHub or Azure DevOps) — resolves which host the project uses, checks the credentials in .claude/.env, tests them against the host API, and confirms the matching MCP server is wired into .mcp.json. Usage: /connect-git
 ---
 
 # connect-git
 
 ## Summary
 
-One-shot connection check for the git host the project actually uses. The host is resolved exactly like the PR skills do (`GIT_HOST` → `origin` remote URL → whichever of `BITBUCKET_WORKSPACE`/`GITHUB_OWNER` is set), so nothing needs configuring twice:
+One-shot connection check for the git host the project actually uses. The host is resolved exactly like the PR skills do (`GIT_HOST` → `origin` remote URL → whichever of `BITBUCKET_WORKSPACE`/`GITHUB_OWNER` is set → `AZURE_DEVOPS_ORG`/`AZURE_DEVOPS_URL`), so nothing needs configuring twice:
 
 | Host          | Credentials (`.claude/.env`)                                                  | How Claude talks to it                                                              |
 | ------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | **Bitbucket** | `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN` | `tools/bb_*.sh` REST scripts (no Bitbucket MCP server exists)                       |
 | **GitHub**    | `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_TOKEN` (+ `GITHUB_API_URL` for GHES)   | `tools/gh_*.sh` REST scripts **and** the `github` MCP server (in `mcp.json.template`, enabled by `sync-env.py` when the host is GitHub) |
+| **Azure DevOps** | `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_REPO` (default: `AZURE_DEVOPS_URL`, then the origin remote); `AZURE_DEVOPS_PAT` optional | the `azure-devops` MCP server only (the PAT, else browser sign-in; enabled by `sync-env.py` when the host is Azure DevOps or an org is known) |
 
-Read-only: one GET against the repo endpoint, no writes, no token ever printed.
+Read-only: one GET against the repo endpoint (Azure DevOps: one MCP read instead), no writes, no token ever printed.
 
 ## Use When
 
 - Setting up a project for the first time, or after switching its remote between Bitbucket and GitHub.
 - `/pr-review`, `/answer-pr-comments` or `/split-pr` fail with 401/403/404.
-- The user asks "is GitHub/Bitbucket connected?".
+- The user asks "is GitHub/Bitbucket/Azure DevOps connected?".
 
 ## Examples
 
@@ -54,18 +55,22 @@ It prints one JSON object (`host`, `env`, `api`, `mcp`) and exits `0` (connected
 
 Stop at the first failing layer and give the user the exact fix:
 
-1. **Exit 2 / `host: null`** — set `GIT_HOST=bitbucket` or `GIT_HOST=github` in `.claude/.env`, or add an `origin` remote.
+1. **Exit 2 / `host: null`** — set `GIT_HOST=bitbucket`, `GIT_HOST=github` or `GIT_HOST=azure` in `.claude/.env`, or add an `origin` remote.
 2. **`env.missing`** — list the keys; they belong in `.claude/.env` (copy of `.claude/.env.example`). Token fields are 1Password references (`op://vault/item/field`) resolved by `hooks/sync-env.py` at session start.
 3. **`env.placeholder`** — the key still holds the template value (`replace-with-…`, `your-…`); ask the user for the real value.
 4. **`env.unresolved_op`** — the `op://` reference was not resolved in this session: `op` is missing or signed out (`op signin`), or the session started before `.env` was filled. Restart the session after fixing.
 5. **`api.status` 401/403/404** — 401: token (and, for Bitbucket, email) rejected; 403: token lacks scope (GitHub: `repo`, or fine-grained Contents + Pull requests read/write); 404: wrong workspace/slug (Bitbucket) or owner/repo (GitHub).
-6. **`mcp.expected: "github"` and `mcp.configured: false`** — the `github` server is either missing from `.mcp.json` or disabled:
+6. **`mcp.expected` is `"github"` or `"azure-devops"` and `mcp.configured: false`** — that server is either missing from `.mcp.json` or disabled:
     - Missing: `.mcp.json` is an old copy that predates the `github` server. Tell the user to delete it and re-run `bin/link-project.sh <this project>` from the shared-config repo (the script never overwrites an existing, different `.mcp.json`). **Do not edit `.mcp.json` yourself.**
-    - Disabled: `hooks/sync-env.py` turned it off because it didn't detect GitHub as the host (e.g. the session started before the remote/`GIT_HOST` was set). Fix the host (step 1) and start a new session — the hook updates `settings.local.json` at session start and it applies from the *next* start.
+    - Disabled: `hooks/sync-env.py` turned it off because it didn't detect the host (e.g. the session started before the remote/`GIT_HOST` was set). Fix the host (step 1) and start a new session — the hook updates `settings.local.json` at session start and it applies from the *next* start.
 
 When everything passes, say so in one line: host, repo, token permissions (`api.detail`), MCP status. Bitbucket has no MCP row to report — say "REST tools only".
 
-### Step 3 — Confirm the MCP server is live (GitHub only)
+### Step 3 — Confirm the MCP server is live (GitHub, Azure DevOps)
+
+**Azure DevOps:** with `AZURE_DEVOPS_PAT` set the `azure-devops` server uses it; without one, its first call in a session opens a browser window for the Microsoft account sign-in. Tell the user before that call. `python3 .claude/tools/azure_repo.py env` prints the org, project and repo it resolved. If `mcp.configured` is true, use ToolSearch (`+azure-devops`) and make one read call: `repo_repository` with `action: "get"`, `repositoryId: <AZURE_DEVOPS_REPO>`, `project: <AZURE_DEVOPS_PROJECT>`. Report: repo reachable, or the failure. It runs `npx @azure-devops/mcp`, so Node.js must be installed. The PR skills read and post through this server (`pr-review`'s `references/azure-devops.md`).
+
+**GitHub:**
 
 The GitHub token needs no API key: if `GITHUB_TOKEN` is unset, `sync-env.py` and the MCP launcher use the token of the user's `gh auth login` session (browser sign-in), and `GITHUB_OWNER`/`GITHUB_REPO` default to the origin remote. If neither a token nor a `gh` session exists, tell the user to run `gh auth login` (or set `GITHUB_TOKEN`).
 

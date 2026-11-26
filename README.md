@@ -2,7 +2,7 @@
 
 Shared, version-controlled Claude Code setup — skills, subagents, and MCP server
 config, linked into every project instead of copy-pasted per repo. Includes
-ready-made skills for Jira/Confluence/Notion context-gathering, Bitbucket/GitHub
+ready-made skills for Jira/Confluence/Notion context-gathering, Bitbucket/GitHub/Azure DevOps
 connection setup, PR review and comment-answering, SonarQube triage, PR-splitting, plan-first
 feature implementation, design-to-code (Figma, screenshots or live sites → per-block specs →
 pixel-diffed UI), evidence-based repository/service overviews, and
@@ -102,6 +102,26 @@ Same steps with the Bitbucket block filled in (`BITBUCKET_WORKSPACE`,
 server is disabled for it (there is no Bitbucket MCP server) and the PR skills use the
 `tools/bb_*.sh` REST scripts. `/connect-git` reports "REST tools only" for the MCP row
 — that is expected.
+
+### An Azure DevOps project
+
+Nothing to fill in: the host, org, project and repo come from the origin remote
+(`dev.azure.com/<org>/<project>/_git/<repo>`). Start Claude Code, then restart it once so
+the `azure-devops` server launches. Without a token its first call in a session opens a
+browser window for the Microsoft account sign-in; set `AZURE_DEVOPS_PAT` to use a personal
+access token instead. It runs through `npx`, so Node.js must be installed.
+
+```bash
+/connect-git                                   # host, org/project/repo, live MCP read
+/pr-review https://dev.azure.com/my-org/My%20Project/_git/api/pullrequest/42
+/answer-pr-comments 42 --dry-run
+```
+
+The PR skills read the PR and its threads and post through the `azure-devops` server, and
+take diffs and code from the local clone (`skills/pr-review/references/azure-devops.md`).
+In a workspace root that is not a repo, paste the project URL into `.claude/.env`
+(`AZURE_DEVOPS_URL=https://dev.azure.com/<org>/<project>/_git`) to turn the server on, and
+pass PR URLs; the skills find the clone in a subdirectory.
 
 ### Switching a project from Bitbucket to GitHub
 
@@ -207,6 +227,8 @@ needs and asks first when the budget is tight.
 | `figma` / `playwright` not listed in `/mcp` | Off unless `DESIGN_MCP=on` is in `.claude/.env`; set it, then start a session and restart once. Still missing: the project's `.mcp.json` predates them; run `bin/sync-projects.sh` |
 | Notion 404 for a page you can open in the browser, even after re-authenticating | `notion-oauth` is signed into another workspace (a personal one can have the same name). `/get-notion-page --check` prints the workspace id; `/mcp` → `notion-oauth` → Authenticate and pick the right workspace in the consent screen's switcher; then set `NOTION_WORKSPACE_ID` in `.claude/.env` |
 | `github` fails on first start | The Docker image is being pulled — wait and restart. Docker must be running |
+| `azure-devops` not listed in `/mcp` | Disabled by `sync-env.py`: the host isn't Azure DevOps and no org is known. Set `AZURE_DEVOPS_URL` (or `AZURE_DEVOPS_ORG`), start a session and restart once |
+| `azure-devops` fails: `AZURE_DEVOPS_ORG is not set` | No org in `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_URL` or an Azure DevOps origin remote (e.g. a workspace root): set `AZURE_DEVOPS_URL` in `.claude/.env`, restart |
 | Shared skills missing from `/` in one project (only a few, project-specific ones show) | The project commits its own `.claude/skills`, and a `git pull` replaced the symlink with that folder. Run `bin/sync-projects.sh --verify` — it links the shared skills into the folder one by one |
 | Server not found / `.mcp.json` has no `github` | The project's `.mcp.json` is an old copy; run `bin/sync-projects.sh` (or `bin/link-project.sh --refresh-mcp <project>`) |
 | 401 / 403 / 404 from a PR skill | Run `/connect-git`; it names the failing layer (token, scope, or owner/repo / workspace/slug) |
@@ -231,6 +253,7 @@ needs and asks first when the budget is tight.
   | Notion | `notion` (`NOTION_TOKEN`) | `notion-oauth` — hosted `mcp.notion.com`, sign in once from `/mcp` |
   | Figma | — | `figma` — hosted `mcp.figma.com`, sign in once from `/mcp` |
   | GitHub | `github` (`GITHUB_TOKEN`) | `github` with the token of your `gh auth login` browser session |
+  | Azure DevOps | `azure-devops` (`AZURE_DEVOPS_PAT`) | `azure-devops` — `@azure-devops/mcp`, browser sign-in on its first call in a session |
   | SonarQube | `sonarqube` (`SONAR_API_TOKEN`) | — |
 
   GitHub's hosted server can't do the same browser sign-in as the other two: its authorization
@@ -243,15 +266,19 @@ needs and asks first when the budget is tight.
   dependencies as of a fixed date (`--exclude-newer` / `--before`), so a dependency published
   later never gets in; move the date together with the version. The `notion` and `sonarqube`
   servers can do whatever their token allows; `env.example` says how to limit each token.
+  `azure-devops` loads only its `core` and `repositories` tools; `settings.json.template`
+  denies its file, branch and PR-state writes and asks before it posts a comment.
   `playwright` (a headless browser for the design skills) needs no credentials; it runs
   with an in-memory profile (`--isolated`), so no cookies or logins persist between sessions.
 
   Nothing in the template is project-specific and nothing is generated from a project: each
   stdio server is launched through `tools/mcp-run.py`, which reads the project's `.claude/.env`
   at server start and fills in the `{{KEY}}` (required) / `{{KEY|default}}` (optional; the default may
-  reference other keys as `{KEY}`, e.g. `{{CONFLUENCE_BASE_URL|{JIRA_BASE_URL}/wiki}}`) placeholders, resolving `op://` 1Password references in memory (secrets are never written to
+  reference other keys as `{KEY}`, e.g. `{{CONFLUENCE_BASE_URL|{JIRA_BASE_URL}/wiki}}`) / `{{KEY?then:else}}`
+  (text chosen by whether the key is set, e.g. `{{AZURE_DEVOPS_PAT?pat:interactive}}`) placeholders, resolving `op://` 1Password references in memory (secrets are never written to
   `.mcp.json`). `--fallback KEY=command` supplies a value when the key has no usable one
-  (`GITHUB_TOKEN` ← `gh auth token`).
+  (`GITHUB_TOKEN` ← `gh auth token`, `AZURE_DEVOPS_ORG` ← `azure_repo.py org`); `--env-b64` exports a
+  value base64-encoded (the Azure DevOps token).
   Why a launcher: Claude Code expands `${VAR}` in `.mcp.json` only from the real process
   environment — not from `.claude/settings*.json` `env` — and substitutes `${VAR:-default}`
   before anything else sees it, so plain `${...}` can't be filled from `.claude/.env`.
@@ -266,9 +293,11 @@ needs and asks first when the budget is tight.
   `notion`/`notion-oauth`; `NOTION_MCP=off` disables both Notion servers); `figma` and
   `playwright` only with `DESIGN_MCP=on`; `github` only when
   the git host is GitHub (same detection as the PR tools: `GIT_HOST`, then the `origin` URL,
-  then `GITHUB_OWNER`) — Bitbucket has no MCP server, the PR skills use `tools/bb_*.sh`. For
+  then `GITHUB_OWNER`) — Bitbucket has no MCP server, the PR skills use `tools/bb_*.sh`;
+  `azure-devops` when the host is Azure DevOps or an org is known (`AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_URL`). For
   GitHub it also fills a missing `GITHUB_OWNER`/`GITHUB_REPO` from the origin remote and a
-  missing `GITHUB_TOKEN` from `gh auth token`. Claude Code reads the lists at startup, so a
+  missing `GITHUB_TOKEN` from `gh auth token`; for Azure DevOps a missing
+  `AZURE_DEVOPS_ORG`/`_PROJECT`/`_REPO` from `AZURE_DEVOPS_URL`, then the origin remote. Claude Code reads the lists at startup, so a
   change applies from the *next* session start. Entries you add yourself for other servers
   are left alone.
 
@@ -314,8 +343,8 @@ needs and asks first when the budget is tight.
 
   | Rule | Covers |
   | --- | --- |
-  | ask | scripts that post or change something outside the machine (`*_post_comment.sh`, `jira_create_child.sh`), `mcp-run.py` (runs any command), `env_exports.py --value` (prints a secret), `workspace_docs.py sync` (`git merge`); reading `.env`, `.env.*` and `settings.local.json` |
-  | deny | `..` in a `.claude/tools/` path; git options that write a file, run a command or read a file outside the repo (`--output`, `diff --no-index`, `blame --contents`, `grep -O`/`--open-files-in-pager`, `fetch --upload-pack`; deny patterns use the shortest prefix git accepts); `gh auth --show-token`; credential files under `~` (`.ssh`, `.aws`, `.config/gh`, `.netrc`, `.git-credentials`, `.npmrc`, `.pypirc`, `.docker/config.json`, `.kube`, `.config/gcloud`, `.azure`, `.gnupg`, `.config/op`, `.claude/.credentials.json`) |
+  | ask | scripts that post or change something outside the machine (`*_post_comment.sh`, `jira_create_child.sh`), the `azure-devops` comment tool (`repo_pull_request_thread_write`), `mcp-run.py` (runs any command), `env_exports.py --value` (prints a secret), `workspace_docs.py sync` (`git merge`); reading `.env`, `.env.*` and `settings.local.json` |
+  | deny | the `azure-devops` tools that commit files, create branches or change a PR (`repo_file_write`, `repo_create_branch`, `repo_pull_request_write`); `..` in a `.claude/tools/` path; git options that write a file, run a command or read a file outside the repo (`--output`, `diff --no-index`, `blame --contents`, `grep -O`/`--open-files-in-pager`, `fetch --upload-pack`; deny patterns use the shortest prefix git accepts); `gh auth --show-token`; credential files under `~` (`.ssh`, `.aws`, `.config/gh`, `.netrc`, `.git-credentials`, `.npmrc`, `.pypirc`, `.docker/config.json`, `.kube`, `.config/gcloud`, `.azure`, `.gnupg`, `.config/op`, `.claude/.credentials.json`) |
 
   Since an existing `settings.json` is never regenerated, merge template changes into a
   project's copy by hand. Wires up `sync-env.py` (SessionStart) and
@@ -329,9 +358,9 @@ needs and asks first when the budget is tight.
   temp file lands in the shared tree.
 - `env.example` — template for a project's `.claude/.env`. Secret fields use
   `op://` (1Password) references; see the file header for setup. Includes both
-  Bitbucket and GitHub credential blocks — `GIT_HOST` (or `tools/detect_git_host.sh`'s
+  Bitbucket, GitHub and Azure DevOps blocks — `GIT_HOST` (or `tools/detect_git_host.sh`'s
   auto-detection from `git remote get-url origin`) picks which one the
-  PR-related skills use and whether the `github` MCP server is enabled. Notion needs no entry by default
+  PR-related skills use and which git MCP server is enabled. Notion needs no entry by default
   (hosted OAuth server); the commented `NOTION_TOKEN` / `NOTION_MCP=off` switch to an API key or turn it off.
 - `bin/link-project.sh [--refresh-mcp] [--dry-run] <path>` — wires a project to this
   repo (symlinks, or per-entry links into a project's own real `.claude/<dir>` — see
@@ -353,12 +382,12 @@ Invoked as `/<skill-name>` (or by the natural-language triggers noted below), un
 
 | Skill | What it does | When it's used |
 | --- | --- | --- |
-| `answer-pr-comments` | Answers unanswered human reviewer comments on a Bitbucket or GitHub PR. Default: composes replies via the `comment-responder` agent, shows them and posts after one confirmation. With `--fix`: verifies each comment against the code, fixes the valid ones, declines the rest with evidence, runs the project's checks, then commits, pushes and posts after one confirmation. | `/answer-pr-comments <pr-number> [<reviewer-name>] [--dry-run] [--fix]` |
+| `answer-pr-comments` | Answers unanswered human reviewer comments on a Bitbucket, GitHub or Azure DevOps PR. Default: composes replies via the `comment-responder` agent, shows them and posts after one confirmation. With `--fix`: verifies each comment against the code, fixes the valid ones, declines the rest with evidence, runs the project's checks, then commits, pushes and posts after one confirmation. | `/answer-pr-comments <pr-number \| azure-devops-pr-url> [<reviewer-name>] [--dry-run] [--fix]` |
 | `backend-implementation` | Backend coding standards for layered services: loads the project's own coding-standards docs first (pointed to by its root `CLAUDE.md`), then applies generic rules — repository pattern (models hold business logic, providers only access data), records vs API contracts, upserts and batches, validation, errors, logging, config, security, tests, PR hygiene. Holds no project data. | Automatically when implementing, fixing or reviewing backend code; project rules go in the project's `docs/coding-standards*.md` |
 | `backend-review` | Reviews backend code (PR, branch or diff) against the same standards used to write it: the `backend-implementation` rules plus the project's coding-standards and style docs. Checks layering, contracts, upserts, validation, errors, logging, security, tests and naming/style; ranks findings and gives ready-to-apply suggestion blocks. Read-only. The `pr-reviewer` agent applies it to backend files. | When reviewing backend code, alone or inside `/pr-review` |
 | `frontend-review` | Reviews front-end / UI code (PR, branch or diff) for any UI stack. First detects the stack from `package.json` and config (React, Next.js, Angular, Vue, Nuxt, Svelte, Solid, web components, React Native or plain HTML/CSS/templates; data layer, styling, i18n, test tools). Then applies UI-wide checks (API data contract and release order, loading/empty/error states, accessibility, i18n, SSR/hydration, state and data, performance, XSS, design system, analytics, tests) plus the detected framework's best practices from `references/` (`react.md`, `angular.md`, `vue.md`, `other-ui.md`). Holds no project data. Read-only. The `pr-reviewer` agent applies it to the `frontend` bucket. | When reviewing UI code, alone or inside `/pr-review` |
 | `caveman` | Token-efficient caveman-mode responses (~75% fewer tokens, full technical accuracy). | `/caveman`, or saying "less tokens" / "be brief"; stays active until "stop caveman" / "normal mode" |
-| `connect-git` | Verifies the project's git-hosting connection: resolves Bitbucket vs GitHub, checks the credentials in `.claude/.env`, tests them against the host API, and confirms the matching MCP server (GitHub) is in `.mcp.json` and answers a live read-only call; reports Notion status. Read-only. | `/connect-git`; first-time setup, after switching remotes, or when PR skills return 401/403/404 |
+| `connect-git` | Verifies the project's git-hosting connection: resolves Bitbucket, GitHub or Azure DevOps, checks the credentials in `.claude/.env`, tests them against the host API, and confirms the matching MCP server (GitHub, Azure DevOps) is in `.mcp.json` and answers a live read-only call; reports Notion status. Read-only. | `/connect-git`; first-time setup, after switching remotes, or when PR skills return 401/403/404 |
 | `create-jira-task` | Creates one or more Jira issues (default type Task), optionally as children of a parent issue such as an Epic. A real **write** operation against Jira Cloud. | `/create-jira-task [--parent=KEY] [--project=KEY] [--issuetype=NAME] [--dry-run]` |
 | `demo-prepare` | Prepares a live demo of a finished change (PR, branch or ticket): picks what can be shown live, dry-runs every command, and writes `DEMO.md` (preparation, a `Step | Command | You should see` table, a timed speech with cues, likely questions, fallback) plus `schema.html` pictures in plain HTML and CSS (no SVG or PNG). Plain English. Follows the repo's own demo convention, else writes to `.claude/demos/<slug>/`. Never commits. | `/demo-prepare [<pr-number \| branch \| ticket-key>] [--minutes=<n>] [--out=<dir>]`; "prepare a demo", "demo speech", "schema for the demo" |
 | `design-build` | Builds UI from a `design-spec` directory one block at a time. Detects the stack (as `frontend-review` does), maps the spec's tokens to the project's, reuses its components, and aligns a block that already exists instead of rebuilding it. Plans first and waits for approval. Then for each block it writes the code, renders it through the `playwright` server at every spec viewport, and diffs it against `reference.png` (`tools/design_png.py diff`), fixing mismatches until the diff passes or the rounds run out. New tokens, fonts, dependencies and third-party assets each need a yes. | `/design-build <spec-dir> [--block=<name>]... [--preview=<url>] [--threshold=<percent>] [--max-rounds=<n>]` |
@@ -370,7 +399,7 @@ Invoked as `/<skill-name>` (or by the natural-language triggers noted below), un
 | `get-notion-page` | Fetches a Notion page by URL or ID as Markdown, following linked Notion pages one level deep. Prefers the Notion MCP tools (token-based `notion` server, then the hosted `notion-oauth` server / claude.ai connector — no API key needed, sign in once from `/mcp`) and falls back to a REST script using `NOTION_TOKEN`. Read-only. | User provides a Notion URL, or a ticket/PR links to one; `/get-notion-page --check` verifies the token |
 | `implement` | Architect/staff-dev skill: fetches a Jira ticket and linked Confluence docs, reads related repos if provided, and produces a detailed implementation plan in `.claude/plans/` for approval before any code is written. | `/implement <ticket-key> [-- <repo1> [<repo2> ...]]` |
 | `pr-description` | Writes or rewrites a PR title and description in short, plain English for non-native speakers: what the PR does and why, not a diff tour. Uses the repo's PR template, diff, commits, the `$JIRA_WORKSPACE` ticket and linked PRs. No Jira link in the body (the key is in the title). Drafts first, posts only with `--post`. | `/pr-description [<pr-number \| branch>] [--post]`; every time a PR is created or its description must change |
-| `pr-review` | Reviews a Bitbucket or GitHub PR (by number, URL, or branch): batch-fetches every linked Jira ticket / Confluence page, asks about cross-service dependencies, then delegates to the `pr-reviewer` agent for a full structured review. Each finding links to its line in the PR's diff view (`tools/pr_line_links.py`). | `/pr-review <pr-number \| url \| branch>` |
+| `pr-review` | Reviews a Bitbucket, GitHub or Azure DevOps PR (by number, URL, or branch): batch-fetches every linked Jira ticket / Confluence page, asks about cross-service dependencies, then delegates to the `pr-reviewer` agent for a full structured review. Each finding links to its line in the PR's diff view (`tools/pr_line_links.py`). | `/pr-review <pr-number \| url \| branch>` |
 | `project-blueprint` | Turns a ticket or a free-text feature description into a pre-implementation project blueprint — architecture, service ownership, API inventory, proposed directory tree, phased roadmap — grounded in technologies/patterns already used elsewhere in the org. Reuses `jira-context` for ticket fetching and `project-overview`'s scanner for repo/sibling inspection. Planning documents only, no code. | `/project-blueprint <ticket-key \| free-text description> [-- <repo1> [<repo2> ...]]` |
 | `project-overview` | Produces an evidence-based technical/architectural overview of a repo or service — purpose, tech stack, architecture, dependency map, ecosystem relationships, risks/gaps — every claim cited to a file, line, or URL. Read-only. | `/project-overview [<path>] [-- <repo1> [<repo2> ...]]` |
 | `run-job` | Runs a service job or one-off script on a deployed environment, or locally against a third-party API, with the user: loads the project's job-running doc first (pointed to by its root `CLAUDE.md`), checks the job exists in the scheduler, picks the route (scheduler run or local run with a temporary scoped key), then walks dry run → canary → full run → second dry run, reading each log and the written records before the next step. The user runs every write and enters secrets only at a hidden terminal prompt. | `/run-job <repo> <job-name> [<env>]`; "run this job on UAT", "run it manually", "do a canary" |
@@ -392,7 +421,7 @@ Subagents invoked by the skills above — not called directly by name.
 | `feature-doc-writer` | Writes the feature document from the ticket, Confluence and diff material in its prompt and returns the markdown. Read is its only tool. | `feature-doc` |
 | `feature-planner` | Architect-level planner: takes a fully-populated Jira context block plus codebase access and produces a concrete implementation plan saved to `.claude/plans/`. Writes no production code. | `implement` |
 | `jira-context` | Fetches a Jira ticket and exhaustively pulls every referenced Confluence page (two levels deep), full bodies, classified by type; also reads `CLAUDE.md` from the primary and any related repos. Uses the Atlassian MCP tools, falling back to `tools/atlassian_fetch.py` (REST) when they're unavailable. Cannot write or edit files. | `get-jira-task`, `implement`, `pr-review` |
-| `pr-reviewer` | Reviews a Bitbucket or GitHub PR end-to-end: fetches diff/commits/comments/Jira context, classifies changed files, reads the working tree, and returns one structured review. Read-only. | `pr-review` |
+| `pr-reviewer` | Reviews a Bitbucket, GitHub or Azure DevOps PR end-to-end (Azure: from the clone and the comments the skill fetched): fetches diff/commits/comments/Jira context, classifies changed files, reads the working tree, and returns one structured review. Read-only. | `pr-review` |
 
 ## What's NOT here (stays per-project, never write project values back into this repo)
 

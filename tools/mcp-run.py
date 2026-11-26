@@ -11,7 +11,7 @@ reads .claude/.env directly (resolving `op://` 1Password references in memory
 via `op read`, only for the keys the server uses — secrets never touch disk).
 
 Usage, as written in mcp.json.template:
-    python3 .claude/tools/mcp-run.py [--env NAME=VALUE]... [--fallback KEY=cmd]... -- <command> [args...]
+    python3 .claude/tools/mcp-run.py [--env NAME=VALUE]... [--env-b64 NAME=VALUE]... [--fallback KEY=cmd]... -- <command> [args...]
 
   {{KEY}}          required: value of KEY (real process env wins, then .env).
                    Missing, empty, a template placeholder, or an unresolved
@@ -23,6 +23,13 @@ Usage, as written in mcp.json.template:
                    are looked up like KEY (incl. op:// and --fallback). If one has
                    no usable value the whole default expands to "" (the variable
                    is then left unset, like an empty optional).
+  {{KEY?then:else}} `then` when KEY has a usable value, `else` when it is unset or
+                   empty (plain text, no nested keys), e.g. {{AZURE_DEVOPS_PAT?pat:interactive}}.
+                   A placeholder or unresolved op:// value is an error, as for {{KEY}}.
+
+--env-b64 NAME=VALUE: like --env, but the expanded value is exported base64-encoded, and
+NAME is left unset when every placeholder in VALUE expands to "" (so a fixed prefix such
+as the ":" in ":{{AZURE_DEVOPS_PAT|}}" does not export a value on its own).
 
 --fallback KEY=<command line>: when KEY has no usable value (not in the process env or
 .env, or a template placeholder / unresolved op:// reference), run the command and use its trimmed stdout (e.g. GITHUB_TOKEN="gh auth token" reuses
@@ -46,6 +53,7 @@ $CLAUDE_PROJECT_DIR.
 """
 from __future__ import annotations
 
+import base64
 import importlib.util
 import os
 import re
@@ -55,7 +63,8 @@ import sys
 from pathlib import Path
 
 # {{KEY}} or {{KEY|default}}; the default may contain {OTHER} key references.
-PLACEHOLDER = re.compile(r"\{\{([A-Za-z0-9_]+)(?:\|((?:[^{}]|\{[A-Za-z0-9_]+\})*))?\}\}")
+PLACEHOLDER = re.compile(
+    r"\{\{([A-Za-z0-9_]+)(?:\?([^{}:|]*):([^{}|]*)|\|((?:[^{}]|\{[A-Za-z0-9_]+\})*))?\}\}")
 KEY_REF = re.compile(r"\{([A-Za-z0-9_]+)\}")
 # A value carrying URL userinfo with a password, e.g. https://user:pass@host (a proxy URL).
 URL_CREDENTIALS = re.compile(r"://[^/?#@\s:]*:[^/?#@\s]*@")
@@ -92,16 +101,16 @@ def main(argv: list[str]) -> int:
     if not command:
         die("no command after --")
 
-    pairs: list[tuple[str, str]] = []
+    pairs: list[tuple[str, str, bool]] = []  # (name, raw, base64)
     fallbacks: dict[str, str] = {}
     it = iter(opts)
     for flag in it:
         value = next(it, None)
-        if flag not in ("--env", "--fallback") or value is None or "=" not in value:
-            die(f"bad option {flag!r} (expected --env NAME=VALUE or --fallback KEY=command)")
+        if flag not in ("--env", "--env-b64", "--fallback") or value is None or "=" not in value:
+            die(f"bad option {flag!r} (expected --env/--env-b64 NAME=VALUE or --fallback KEY=command)")
         name, _, raw = value.partition("=")
-        if flag == "--env":
-            pairs.append((name, raw))
+        if flag in ("--env", "--env-b64"):
+            pairs.append((name, raw, flag == "--env-b64"))
         else:
             fallbacks[name] = raw
 
@@ -109,11 +118,11 @@ def main(argv: list[str]) -> int:
     env_file = find_project() / ".claude" / ".env"
     file_env = sync_env.parse_env_file(env_file) if env_file.is_file() else {}
 
-    templates = [raw for _, raw in pairs] + command
+    templates = [raw for _, raw, _ in pairs] + command
     keys: set[str] = set()
     for m in (m for t in templates for m in PLACEHOLDER.finditer(t)):
         keys.add(m.group(1))
-        keys.update(KEY_REF.findall(m.group(2) or ""))
+        keys.update(KEY_REF.findall(m.group(4) or ""))
 
     # Real process env wins over the file; only op:// refs for keys we use get resolved.
     values = {k: os.environ[k] for k in keys if os.environ.get(k)}
@@ -132,7 +141,7 @@ def main(argv: list[str]) -> int:
 
     def expand(text: str) -> str:
         def sub(m: re.Match) -> str:
-            key, default = m.group(1), m.group(2)
+            key, then, otherwise, default = m.group(1), m.group(2), m.group(3), m.group(4)
             val = values.get(key, "")
             if val.startswith("op://"):
                 problems.append(f"{key} is an unresolved op:// reference (is `op` installed and signed in?)")
@@ -140,6 +149,8 @@ def main(argv: list[str]) -> int:
             if val and sync_env.looks_like_placeholder(val):
                 problems.append(f"{key} still looks like a placeholder ({val!r})")
                 return ""
+            if then is not None:
+                return then if val else otherwise
             if val:
                 return val
             if default is not None:
@@ -154,8 +165,11 @@ def main(argv: list[str]) -> int:
     child_env = {k: v for k, v in os.environ.items()
                  if k not in file_env and not sync_env.SECRET_NAME.search(k)
                  and not URL_CREDENTIALS.search(v)}
-    for name, raw in pairs:
+    for name, raw, b64 in pairs:
         expanded = expand(raw)
+        if b64:
+            filled = any(expand(m.group(0)) for m in PLACEHOLDER.finditer(raw))
+            expanded = base64.b64encode(expanded.encode()).decode() if filled else ""
         if expanded:
             child_env[name] = expanded
         else:
