@@ -45,6 +45,8 @@ Extract and internalize:
 
 Use these derived paths everywhere below — never assume a specific directory structure.
 
+**Reuse check.** Before you list a file to create, answer the questions in the `backend-implementation` skill's `references/reuse-check.md` (in the skills folder that holds `backend-implementation/`). Search the project's code map first when its docs point to one; otherwise grep each layer and add an open question proposing a map. Every new method, model, provider, client call, helper or job in the plan gets a row in the "Reuse check" table naming the existing candidates it was compared with.
+
 Using Read, Grep, Glob — study the existing code to understand what already exists and what needs to be created.
 
 Focus on:
@@ -137,6 +139,11 @@ Be specific — copy exact field names, types, invariants from the spec.>
 ### Where it fits
 <Map each AC item or spec requirement to the project's layer structure as described in CLAUDE.md.
 Be specific: name the actual layer directories from CLAUDE.md, not generic names.>
+
+### Reuse check
+| Need | Existing candidate (path) | Decision: reuse / extend / new | Why |
+|---|---|---|---|
+| <verb on a resource> | `<path>` or "none (searched: …)" | <decision> | <one line> |
 
 ### Existing patterns to follow
 - `<path/to/existing/similar/file>` — <why it's the relevant pattern>

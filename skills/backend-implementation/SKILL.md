@@ -17,6 +17,7 @@ Generic and reusable: no company, product or project data lives here. Project-sp
 6. Before opening a PR and after every push, run `references/review-checklist.md` (grouped like reviewers' feedback: architecture, contracts, data, tests, naming, organisation, errors, process). If the change adds or edits docs (`*.md`, ADRs, READMEs, glossary, code comments that describe behaviour), also run the `doc-review` self-check (`../doc-review/references/self-check.md`) on them.
 7. When reviewers disagree, follow the more specific or newest convention and say in both threads what you did and why.
 8. If the project documents its reviewers' expectations (a reviewer-profile or review-lessons doc), read it and write the code those reviewers would approve on the first pass.
+9. **Reuse check before any new function:** before you add a method, model, provider, client call, helper or job, answer the questions in `references/reuse-check.md` from the project's code map, or from a grep when there is no map (and offer to build one). Put the answers in the plan as `Need | Existing | Decision | Why`.
 
 ## 1. Components and layering
 
