@@ -1,6 +1,6 @@
 ---
 name: workspace-docs
-description: Knowledge library for a multi-repo workspace root (a folder of independent repos — a "project family") — a lean root CLAUDE.md index plus docs/ chunks of at most 4 KB with YAML frontmatter (summary, keywords, verified) in a fixed layout (services/, lookups/, connections/, recipes/, links, commands, conventions, checklist, security, drift). Commands — init, refresh, align, check, status, find, add-doc, add-link, add-repo, remove-repo, note. Backed by .claude/tools/workspace_docs.py. Usage: /workspace-docs <command> [args] [--root=<workspace-root>]
+description: Knowledge library for a multi-repo workspace root (a folder of independent repos — a "project family") — a lean root CLAUDE.md index plus docs/ chunks of at most 4 KB with YAML frontmatter (summary, keywords, verified) in a fixed layout (services/, lookups/, connections/, recipes/, links, commands, conventions, checklist, security, drift), plus a generated code index (docs/code-index/<repo>/ — every exported function, component, class, type, enum, constant and declared dependency per directory, with file:line and importer counts) searched before adding code. Commands — init, refresh, align, check, status, find, symbol, code-index, add-doc, add-link, add-repo, remove-repo, note. Backed by .claude/tools/workspace_docs.py. Usage: /workspace-docs <command> [args] [--root=<workspace-root>]
 ---
 
 # workspace-docs — chunked, searchable knowledge library for a workspace of repos
@@ -13,7 +13,8 @@ chunk instead of whole repos or stale READMEs.
 - Layout, rules, align-mode mapping: `reference/layout.md` (next to this file).
 - File templates (service, lookup, connection, recipe, root CLAUDE.md): `reference/templates.md`.
 - Mechanical helper (stdlib Python): `.claude/tools/workspace_docs.py` — `inventory`, `check`,
-  `status`, `sync`, `changes`, `baseline`, `find`, `audit`, `scaffold`, `link`. Run it as `python3 -I .claude/tools/workspace_docs.py <cmd>`
+  `status`, `sync`, `changes`, `baseline`, `find`, `code-index`, `symbol`, `audit`, `scaffold`, `link`
+  (`code-index` runs `.claude/tools/code_index.mjs` with Node; TS/JS needs a `typescript` package in the repo or a sibling repo's `node_modules`). Run it as `python3 -I .claude/tools/workspace_docs.py <cmd>`
   from the workspace root (or pass `--root`). Its writing commands (`scaffold`, `link add`/`remove`,
   `baseline --set`) always refuse a root inside this shared config repo and, without `--root`, a root
   inside any git work tree. Below it is abbreviated `WSD`.
@@ -29,15 +30,17 @@ Read both reference files before writing any chunk.
 | `align` | Convert an existing docs tree / oversized CLAUDE.md into the canonical layout without losing content. Alias: `migrate` | `CLAUDE.md`, `docs/**` |
 | `check` | Validate (`WSD check`), fix every FAIL | fixes only |
 | `status [--fetch]` | Staleness dashboard (`WSD status`): per-repo default-branch commits since the baseline, missing/orphan docs, largest chunks | nothing |
+| `code-index [--repos=a,b]` | Regenerate the code index from each repo's default branch (`WSD code-index`): per repo, every exported function, component, class (+ public methods), interface, type, enum and constant by directory with `file:line` and importer count, plus `dependencies.md` (declared libraries; workspace packages linked to their repo's index). TS/JS parsed by the TypeScript compiler; Kotlin, Java, Swift, Python, Go by declaration patterns. One repo per remote (extra checkouts skipped); a repo's folder is rewritten whole | `docs/code-index/**` |
+| `symbol <name or words> [--repo=R] [--kind=K]` | Look code up before adding any (`WSD symbol`): exact names first, then lines holding every word; open the hit at its `file:line` | nothing |
 | `find <question>` | Answer from the library: `WSD find`, Read the top 1–3 chunks, answer with chunk paths cited; say when the library has no answer | nothing |
 | `add-doc <url\|path\|text> [--as recipe\|lookup\|connection\|topic\|service:<repo>] [--name=<slug>]` | Ingest a Confluence/Notion/Jira/web page or local file as a chunk (or merge it into an existing one), with source link | one chunk + index row |
 | `add-link <url> "<why>" [--title=T] [--tags=a,b] [--pin]` | Register a useful link in `docs/links.md`; `--pin` also mirrors it into root `CLAUDE.md` so it is always in context (max 10 pinned) | `docs/links.md`, `CLAUDE.md` |
 | `add-repo <name>` | A repo was cloned into the workspace: analyze it, write its service chunk, add catalog rows, update lookups/connections | new + touched chunks |
-| `remove-repo <name>` | A repo was removed: delete its chunks, drop catalog rows, mark facts in lookups as "repo removed" | touched chunks |
+| `remove-repo <name>` | A repo was removed: delete its chunks and its code index, drop catalog rows, mark facts in lookups as "repo removed" | touched chunks |
 | `note <repo\|chunk> "<fact>"` | Capture a fact learned during work into the right chunk (verify it in code first), splitting if it would pass 4 KB | one chunk |
 
 No command given → run `status` and suggest the next command (no `docs/services/` → `init`;
-check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
+check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`; `CODE INDEX MISSING/behind` → `code-index`).
 
 ## Hard rules
 1. **Never record secret values.** Names of env vars/headers/vaults only. Never read `.env`,
@@ -96,13 +99,17 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
    identifiers from its headings/tables, verified = the analysis date stated in it (else its mtime).
 5. **Root CLAUDE.md** from the skeleton in `reference/templates.md`; every repo name in backticks; keep
    the `<!-- pinned-links:start -->…end -->` block if present.
-6. **Validate:** `WSD check` until `OK`; `init`/`refresh`/`add-repo` end with `WSD baseline --set [--repos …]`
+6. **Code index:** `WSD code-index` (init: all repos; refresh/add-repo: the repos re-verified or showing
+   `CODE INDEX behind` in `WSD status`). Generated: never edit `docs/code-index/` by hand, and do not cite
+   its chunks from hand-written ones except `docs/code-index/README.md` (root `CLAUDE.md` Quick navigation
+   and the project's reuse-check recipe point there). A FAIL naming a chunk over 4 KB is a tool bug: report it.
+7. **Validate:** `WSD check` until `OK`; `init`/`refresh`/`add-repo` end with `WSD baseline --set [--repos …]`
    for the repos re-verified (records the default-branch commit the docs now describe); for `align`/`refresh` also `WSD audit <backup.tgz>` (every
    backticked identifier of the old docs must still exist; restore real losses, list deliberate drops
    such as old doc paths in the report); spot-check 3 facts (one per family) in code; `WSD find` 3
    realistic questions and confirm the right chunk ranks first (else improve its keywords).
    `WSD link --pin` rewrites root CLAUDE.md: re-read it before editing it yourself.
-7. **Report:** command, chunks written/changed, largest chunk, CLAUDE.md size, repos added/removed/
+8. **Report:** command, chunks written/changed, code-index symbols per repo, largest chunk, CLAUDE.md size, repos added/removed/
    re-verified, content dropped (why), backup path, remaining FAILs.
 
 ### refresh (diff-driven; run the shared steps with these specifics)
@@ -132,7 +139,7 @@ check FAILs or CLAUDE.md > 8 KB → `align`; stale repos → `refresh`).
 5. Apply the reports yourself (shared step 4); keep chunks ≤ 4 KB by moving detail to `--<topic>`
    overflow chunks, never by dropping facts. Bump `verified:` on chunks you re-checked; update the
    workspace baseline/HEAD lookup if the library has one.
-6. Validate (shared step 6): `WSD check`, `WSD audit <backup>`, spot-checks, `WSD find`; then
+6. `WSD code-index --repos <every repo with commits>` (shared step 6), then validate (shared step 7): `WSD check`, `WSD audit <backup>`, spot-checks, `WSD find`; then
    `WSD baseline --set` for every repo re-verified, and `WSD changes` must show `0 commits` for them.
 
 ### add-doc
@@ -158,9 +165,19 @@ to review. If `docs/links.md` would pass 4 KB, move one tag group into `docs/lin
 (`WSD scaffold topic links-<tag>` then move the file) and point to it from `docs/links.md`.
 
 ### remove-repo
-Back up; delete `docs/services/<repo>.md` and `docs/services/<repo>--*.md`; remove its rows from `services/README.md`, root CLAUDE.md
+Back up; delete `docs/services/<repo>.md` and `docs/services/<repo>--*.md`; run `WSD code-index` (drops
+`docs/code-index/<repo>/` and its row); remove its rows from `services/README.md`, root CLAUDE.md
 §2, `commands.md`, `lookups/versions*`; in other lookups/connections replace it with
 `<repo> (removed <date>)` where history matters, else drop the row; `WSD check`.
+
+### symbol / reuse check
+Before any new function, component, class, type, constant, job or dependency (the implementation skills
+run this as their reuse check): `WSD status` → `WSD code-index --repos <repo>` when `CODE INDEX behind`;
+`WSD symbol <verb noun>` for each need, in the target repo, the repos it calls and the shared libraries;
+read `docs/code-index/<repo>/dependencies.md` before adding a library. Reuse, else extend the nearest
+match (its `←N` importers are the callers to re-test), else add new. The index covers the default branch
+only; a merged change appears at the next `code-index`. A flow later work should call instead of copying
+goes into the project's reuse recipe with `note`.
 
 ### note
 Verify the fact in code (cite file:line in your reply, not necessarily in the chunk), find the chunk

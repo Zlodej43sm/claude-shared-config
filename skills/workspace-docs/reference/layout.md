@@ -25,11 +25,18 @@
                                 against (`workspace_docs.py baseline --set`; read by `status` and `changes`)
     links.md                    useful-links registry (managed by `workspace_docs.py link`; pinned rows
                                 are mirrored into root CLAUDE.md between pinned-links markers)
+    code-index/README.md        generated (`workspace_docs.py code-index`): one row per repo (ref, commit, symbol count)
+    code-index/<repo>/README.md generated per repo: counts, line format, chunk list (README-2.md… when long);
+                                frontmatter also holds ref, commit, symbols (read by `status`)
+    code-index/<repo>/<dir>.md  generated: exported symbols of a run of directories, `- <kind> \`name\`(params) file:line ←N`
+    code-index/<repo>/dependencies.md  generated: declared dependencies per manifest
     tools/                      optional workspace-specific scripts (e.g. a schema audit); the
                                 validator is the shared `.claude/tools/workspace_docs.py check`
 ```
 
 ## Chunk rules
+- `docs/code-index/` is generated: same size and frontmatter rules, never edited by hand, rewritten per repo
+  by `code-index`; `find` skips it unless `--code` (use `symbol`), `inventory` only counts it.
 - **≤ 4096 bytes** per `.md` under `docs/` (validator enforces). Split along a natural seam; never truncate.
 - **Frontmatter first**, exactly these keys (others optional):
   ```

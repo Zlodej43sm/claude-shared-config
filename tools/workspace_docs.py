@@ -30,7 +30,16 @@ through a project's .claude/ symlinks) and, without --root, a root inside any gi
   workspace_docs.py baseline [--set] [--repos a,b]
                                               show, or record after a refresh, the default-branch commit each repo's docs
                                               were verified against (docs/baseline.json)
-  workspace_docs.py find <words...> [-n N]    rank chunks for a question (frontmatter weighted); prints path + summary
+  workspace_docs.py find <words...> [-n N] [--code]
+                                              rank chunks for a question (frontmatter weighted); prints path + summary;
+                                              docs/code-index/ is searched only with --code (use `symbol` for code)
+  workspace_docs.py code-index [--repos a,b] [--typescript DIR]
+                                              regenerate docs/code-index/<repo>/ from each repo's default branch (node +
+                                              code_index.mjs next to this script): every exported symbol per directory with
+                                              file:line and importer counts, plus declared dependencies; one repo per remote
+  workspace_docs.py symbol <words...> [--repo R] [--kind K] [-n N]
+                                              look a symbol up in docs/code-index/: lines containing every word, exact name
+                                              matches first; prints repo, directory, the symbol line and its chunk
   workspace_docs.py audit <backup.tgz>        no-content-loss check after align/refresh: backticked identifiers of
                                               the backup that no longer appear anywhere in CLAUDE.md + docs/
   workspace_docs.py scaffold <kind> <name> [--summary S] [--keywords a,b] [--title T]
@@ -49,7 +58,8 @@ MAX_ROOT = int(os.environ.get("MAX_ROOT", 8192))
 MAX_PINNED = 10
 REQUIRED_KEYS = ("summary", "keywords", "verified")
 TOP_LEVEL = "lookups|commands|conventions|checklist|change-map[A-Za-z0-9_-]*|security|drift|links"
-LIB_RE = re.compile(r"docs/(?:(?:services|lookups|connections|recipes|tools|links)/[A-Za-z0-9_.-]+|(?:%s)\.md)" % TOP_LEVEL)
+LIB_RE = re.compile(r"docs/(?:(?:services|lookups|connections|recipes|tools|links)/[A-Za-z0-9_.-]+|code-index(?:/[A-Za-z0-9_.-]+){1,2}|(?:%s)\.md)" % TOP_LEVEL)
+CODE_INDEX = "docs/code-index"
 VERSION_FILES = (".nvmrc", ".node-version", ".python-version", ".tool-versions", ".java-version", ".ruby-version")
 LOCK_FILES = {"package-lock.json": "npm", "yarn.lock": "yarn", "pnpm-lock.yaml": "pnpm", "uv.lock": "uv",
               "poetry.lock": "poetry", "Pipfile.lock": "pipenv", "pom.xml": "maven", "build.gradle": "gradle",
@@ -85,7 +95,7 @@ def unsafe_root(root, explicit):
 
 def writes(a):
     """True for the subcommands that write docs/ or CLAUDE.md."""
-    return a.cmd == "scaffold" or (a.cmd == "link" and a.action != "list") or (a.cmd == "baseline" and a.set)
+    return a.cmd in ("scaffold", "code-index") or (a.cmd == "link" and a.action != "list") or (a.cmd == "baseline" and a.set)
 
 
 def git(repo, *args):
@@ -119,9 +129,11 @@ def frontmatter(path):
     return fm, text[end + 4:]
 
 
-def chunks(root):
+def chunks(root, code=True):
+    """Every .md under docs/; code=False leaves out the generated docs/code-index/."""
     docs = root / "docs"
-    return sorted(docs.rglob("*.md")) if docs.is_dir() else []
+    found = sorted(docs.rglob("*.md")) if docs.is_dir() else []
+    return found if code else [c for c in found if not c.is_relative_to(root / CODE_INDEX)]
 
 
 def rel(root, p):
@@ -154,7 +166,8 @@ def cmd_inventory(root, _a):
             continue
         out["other_entries"].append({"name": p.name, "type": "dir" if p.is_dir() else "file",
                                      "sensitive": bool(SECRET_HINT.search(p.name))})
-    for c in chunks(root):
+    out["code_index_chunks"] = len(chunks(root)) - len(chunks(root, code=False))
+    for c in chunks(root, code=False):
         fm, _ = frontmatter(c)
         out["chunks"].append({"path": rel(root, c), "bytes": c.stat().st_size,
                               "verified": (fm or {}).get("verified")})
@@ -197,9 +210,22 @@ def run_checks(root):
         if c.name != "README.md" and not (root / service_repo(c) / ".git").exists():
             fails.append(f"docs/services/{c.name} has no matching repo '{service_repo(c)}'")
     refs = set(LIB_RE.findall(claude_text))
+    # LIB_RE stops at a space, so a repo folder with a space ("Merlin SWP") is cut short;
+    # a cut ref counts as resolved when a backticked full path that exists starts with it.
+    quoted = set(re.findall(r"`(docs/[^`]+)`", claude_text))
     for c in chunks(root):
-        refs.update(LIB_RE.findall(c.read_text(errors="replace")))
-    fails += [f"dangling link: {ref}" for ref in sorted(refs) if not (root / ref).exists()]
+        text = c.read_text(errors="replace")
+        refs.update(LIB_RE.findall(text))
+        quoted.update(re.findall(r"`(docs/[^`]+)`", text))
+    whole = {q for q in quoted if " " in q and (root / q).exists()}
+    fails += [f"dangling link: {ref}" for ref in sorted(refs)
+              if not (root / ref).exists() and not any(q.startswith(ref + " ") for q in whole)]
+    if (root / CODE_INDEX).is_dir():
+        if not (root / CODE_INDEX / "README.md").is_file():
+            fails.append(f"{CODE_INDEX}/README.md missing (run code-index)")
+        for r in indexable_repos(root):
+            if not (root / CODE_INDEX / r.name / "README.md").is_file():
+                fails.append(f"repo {r.name} has no {CODE_INDEX}/{r.name}/ (run code-index --repos {r.name})")
     if claude_text and len(claude_text.encode()) > MAX_ROOT:
         fails.append(f"root CLAUDE.md is {len(claude_text.encode())} bytes (keep it an index, max {MAX_ROOT})")
     return fails
@@ -358,6 +384,8 @@ def cmd_status(root, a):
                 state += f"  CORE: default branch {b['branch']} -> {ref.split('/', 1)[1]}"
         else:
             state = ("stale" if head and ver and head > ver else "ok" if ver else "no verified") + "  (no baseline: run baseline --set after refresh)"
+        if ref and (root / CODE_INDEX).is_dir():
+            state += "  " + code_index_state(root, r, ref)
         print(f"{r.name:40} {ref:16} {head:10} {ver:10} {state}")
     for c in svc.glob("*.md"):
         if c.name != "README.md" and not (root / service_repo(c) / ".git").exists():
@@ -460,7 +488,7 @@ def cmd_changes(root, a):
     if a.fetch:
         fetch_all(root, names)
     base = load_baseline(root)
-    texts = {rel(root, c): c.read_text(errors="replace") for c in chunks(root)}
+    texts = {rel(root, c): c.read_text(errors="replace") for c in chunks(root, code=False)}
     claude = root / "CLAUDE.md"
     if claude.is_file():
         texts["CLAUDE.md"] = claude.read_text()
@@ -494,7 +522,7 @@ def cmd_find(root, a):
     if not words:
         print("give some words to search for"); return 2
     scored = []
-    for c in chunks(root):
+    for c in chunks(root, code=a.code):
         fm, body = frontmatter(c)
         fm = fm or {}
         head = " ".join([fm.get("keywords", ""), c.stem]).lower()
@@ -512,6 +540,155 @@ def cmd_find(root, a):
         print(f"{hits}/{len(words)} {score:4}  {path}\n          {summ}")
     if not scored:
         print("no chunk matches; try synonyms, or grep the repos directly")
+    return 0
+
+
+# ---------------------------------------------------------------- code index
+def indexable_repos(root):
+    """One repo per origin remote: an extra checkout of the same remote is skipped (the folder named after it wins)."""
+    chosen = {}
+    for r in repos(root):
+        url = origin_url(r)
+        stem = url.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1].removesuffix(".git") if url else r.name
+        cur = chosen.get(url or r.name)
+        if cur is None or (r.name == stem and cur.name != stem):
+            chosen[url or r.name] = r
+    return sorted(chosen.values())
+
+
+def code_index_meta(root, name):
+    fm, _ = frontmatter(root / CODE_INDEX / name / "README.md") if (root / CODE_INDEX / name / "README.md").is_file() else (None, "")
+    return fm or {}
+
+
+def code_index_state(root, r, ref):
+    meta = code_index_meta(root, r.name)
+    if r not in indexable_repos(root):
+        return "code index: extra checkout (not indexed)"
+    if not meta.get("commit"):
+        return "CODE INDEX MISSING"
+    if not git(r, "rev-parse", "--verify", "--quiet", meta["commit"] + "^{commit}"):
+        return "CODE INDEX commit unknown: regenerate"
+    n = git(r, "rev-list", "--count", f"{meta['commit']}..{ref}")
+    return "code index ok" if n == "0" else f"CODE INDEX behind ({n} commits)"
+
+
+def workspace_packages(root):
+    """Package name -> repo for every package.json (depth <= 4) on each repo's default branch."""
+    out = {}
+    for r in indexable_repos(root):
+        ref = default_ref(r)
+        if not ref:
+            continue
+        for p in git(r, "ls-tree", "-r", "--name-only", ref).splitlines():
+            if p.rsplit("/", 1)[-1] == "package.json" and p.count("/") <= 3 and "node_modules/" not in p:
+                try:
+                    name = json.loads(git(r, "show", f"{ref}:{p}") or "{}").get("name")
+                except ValueError:
+                    continue
+                if name:
+                    out.setdefault(name, r.name)
+    return out
+
+
+def cmd_code_index(root, a):
+    import shutil, tempfile
+    names, tool = repo_filter(a), Path(__file__).resolve().parent / "code_index.mjs"
+    indexable = indexable_repos(root)
+    unknown = names - {r.name for r in repos(root)}
+    if unknown:
+        print("unknown repos:", ", ".join(sorted(unknown))); return 2
+    rc = 0
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tmp:
+        json.dump(workspace_packages(root), tmp)
+    try:
+        for r in repos(root):
+            if names and r.name not in names:
+                continue
+            if r not in indexable:
+                print(f"{r.name:32} skip    extra checkout of a remote indexed under another folder"); continue
+            ref = default_ref(r)
+            if not ref:
+                print(f"{r.name:32} skip    no origin default branch"); continue
+            cmd = ["node", str(tool), "--repo", str(r), "--ref", ref, "--out", str(root / CODE_INDEX / r.name),
+                   "--name", r.name, "--workspace-packages", tmp.name]
+            if a.typescript:
+                cmd += ["--typescript", a.typescript]
+            try:
+                p = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+            except Exception as e:
+                print(f"{r.name:32} FAIL    {e}"); rc = 1; continue
+            if p.returncode:
+                err = [l for l in p.stderr.splitlines() if re.match(r"\s*(\w*Error|no TypeScript|refusing)", l)] or p.stderr.strip().splitlines() or [str(p.returncode)]
+                print(f"{r.name:32} FAIL    {err[0].strip()}"); rc = 1; continue
+            res = json.loads(p.stdout.strip().splitlines()[-1])
+            print(f"{r.name:32} ok      {ref}@{res['commit']}  {res['symbols']} symbols, {res['files']} files, {res['chunks']} chunks")
+    finally:
+        os.unlink(tmp.name)
+    base = root / CODE_INDEX
+    if base.is_dir():
+        keep = {r.name for r in indexable}
+        for d in sorted(p for p in base.iterdir() if p.is_dir() and p.name not in keep):
+            shutil.rmtree(d); print(f"{d.name:32} removed (repo gone or extra checkout)")
+        write_code_index_readme(root, indexable)
+    return rc
+
+
+def write_code_index_readme(root, indexable):
+    rows = []
+    for r in indexable:
+        m = code_index_meta(root, r.name)
+        if m:
+            rows.append(f"| `{r.name}` | `{CODE_INDEX}/{r.name}/README.md` | {m.get('ref', '')} @ `{m.get('commit', '')}` "
+                        f"| {m.get('symbols', '')} | {m.get('chunks', '')} | {m.get('verified', '')} |")
+    text = f"""---
+summary: Code index of every repo — exported functions, components, classes, types, enums, constants and dependencies, to check for reuse before adding code
+keywords: [code index, symbols, reuse, existing function, duplicate, helper, model, method, constant, dependencies, before implementation]
+verified: {TODAY}
+---
+# Code index
+
+Generated from each repo's default branch by `workspace_docs.py code-index`; do not edit. Regenerate one repo with
+`--repos <repo>` (refresh does it for every repo with new commits); `status` shows `CODE INDEX behind` when it lags.
+
+- **Look up:** `workspace_docs.py symbol <name or words> [--repo R] [--kind fn|cmp|class|type|ifc|enum|const|obj|fun|…]`;
+  or grep `{CODE_INDEX}/`. Each repo has `dependencies.md` (declared libraries, workspace packages linked).
+- **Before adding** a function, component, class, type, constant or dependency: search here first; reuse, then extend,
+  then add new (the reuse check of the implementation workflow).
+
+| Repo | Index | Ref @ commit | Symbols | Chunks | Generated |
+|---|---|---|---|---|---|
+""" + "\n".join(rows) + "\n"
+    (root / CODE_INDEX / "README.md").write_text(text)
+
+
+def cmd_symbol(root, a):
+    base = root / CODE_INDEX
+    if not base.is_dir():
+        print("no docs/code-index/ yet: run code-index"); return 2
+    words = [w.lower() for w in a.words]
+    hits = []
+    for c in sorted(base.rglob("*.md")):
+        if c.parent == base or c.name.startswith(("README", "dependencies")) or (a.repo and c.parent.name != a.repo):
+            continue
+        d = ""
+        for line in c.read_text(errors="replace").splitlines():
+            if line.startswith("### "):
+                d = line[4:].removesuffix(" (cont.)"); continue
+            m = re.match(r"- (\w+) `([^`]+)`", line)
+            if not m or (a.kind and m.group(1) != a.kind):
+                continue
+            low, name = line.lower(), m.group(2).lower()
+            if all(w in low for w in words):
+                score = 3 if name in words or name == "".join(words) else 2 if all(w in name for w in words) else 1
+                hits.append((-score, c.parent.name, d, line[2:], rel(root, c)))
+    hits.sort(key=lambda h: (h[0], h[1], h[2]))
+    for _, repo, d, line, path in hits[: a.n]:
+        print(f"{repo}  {d}\n    {line}\n    ({path})")
+    if len(hits) > a.n:
+        print(f"… {len(hits) - a.n} more (-n, --repo or --kind to narrow)")
+    if not hits:
+        print("no symbol matches: try a shorter word or a synonym; then grep the repo itself (the index covers the default branch)")
     return 0
 
 
@@ -702,6 +879,10 @@ def main():
     ch.add_argument("--json", action="store_true")
     bl = sub.add_parser("baseline"); bl.add_argument("--set", action="store_true"); bl.add_argument("--repos")
     f = sub.add_parser("find"); f.add_argument("words", nargs="+"); f.add_argument("-n", type=int, default=5)
+    f.add_argument("--code", action="store_true", help="also rank docs/code-index/ chunks")
+    ci = sub.add_parser("code-index"); ci.add_argument("--repos"); ci.add_argument("--typescript")
+    sy2 = sub.add_parser("symbol"); sy2.add_argument("words", nargs="+"); sy2.add_argument("--repo"); sy2.add_argument("--kind")
+    sy2.add_argument("-n", type=int, default=25)
     au = sub.add_parser("audit"); au.add_argument("backup", help="docs-backup-*.tgz made before align/refresh")
     s = sub.add_parser("scaffold"); s.add_argument("kind", choices=sorted(STUBS)); s.add_argument("name")
     s.add_argument("--summary"); s.add_argument("--keywords"); s.add_argument("--title")
@@ -715,7 +896,7 @@ def main():
               "or pass --root <workspace-root> explicitly.", file=sys.stderr)
         return 2
     return {"inventory": cmd_inventory, "check": cmd_check, "status": cmd_status, "sync": cmd_sync, "changes": cmd_changes,
-            "baseline": cmd_baseline, "find": cmd_find, "audit": cmd_audit,
+            "baseline": cmd_baseline, "find": cmd_find, "audit": cmd_audit, "code-index": cmd_code_index, "symbol": cmd_symbol,
             "scaffold": cmd_scaffold, "link": cmd_link}[a.cmd](root, a)
 
 

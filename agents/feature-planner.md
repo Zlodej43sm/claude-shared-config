@@ -19,6 +19,7 @@ Your prompt contains:
 - `project_root` — absolute path to the primary project.
 - `target_repos` — the repos the ticket changes.
 - `planning_standard` — absolute path of the project's roadmap or plan standard, or `none`.
+- `code_index` — absolute path of the workspace code index (`docs/code-index/README.md`), or `none`. When given, search it (`python3 -I <project_root>/.claude/tools/workspace_docs.py --root <project_root> symbol <words> [--repo R]`) for every need before you list a new symbol.
 - `open_review` — review comments already left on the ticket's open PR, or `none`.
 
 ## Step 1 — Parse the context block
@@ -45,7 +46,7 @@ Extract and internalize:
 
 Use these derived paths everywhere below — never assume a specific directory structure.
 
-**Reuse check.** Before you list a file to create, answer the questions in the `backend-implementation` skill's `references/reuse-check.md` (in the skills folder that holds `backend-implementation/`). Search the project's code map first when its docs point to one; otherwise grep each layer and add an open question proposing a map. Every new method, model, provider, client call, helper or job in the plan gets a row in the "Reuse check" table naming the existing candidates it was compared with.
+**Reuse check.** Before you list a file to create, answer the questions in the `backend-implementation` skill's `references/reuse-check.md` (in the skills folder that holds `backend-implementation/`). Search the project's code index first when its docs point to one (`workspace_docs.py symbol <words>`, `docs/code-index/<repo>/dependencies.md`); otherwise grep each layer and add an open question proposing one (`/workspace-docs code-index`). Every new method, model, provider, client call, helper or job in the plan gets a row in the "Reuse check" table naming the existing candidates it was compared with.
 
 Using Read, Grep, Glob — study the existing code to understand what already exists and what needs to be created.
 

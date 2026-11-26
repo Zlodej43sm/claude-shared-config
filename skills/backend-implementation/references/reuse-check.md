@@ -2,10 +2,13 @@
 
 Run it before you write any new method or endpoint, model, provider or repository, client call, helper, constant or job. Write every answer in the plan. A "none" names what you searched. Reviewers ask "why not the existing X?" when a new function duplicates one that is already there; this check answers that before the code exists.
 
-## 1. Get the map of what exists
+## 1. Search the code index first
 
-1. Look for a **code map** in the project docs (the root `CLAUDE.md` / `AGENTS.md` points to it). A code map is a generated list of every exported function per layer and domain, with its parameters and the number of files that import it. When the commit it was built from is behind the default branch, regenerate it, then search it.
-2. **No map:** propose generating one: parse the source tree of the default branch (not the local checkout), list each layer's exported functions with their first parameter's fields and their importer count, and write chunks the docs index can link. Until it exists, list the layer folders and grep them: `git grep -nE "export (async )?function|export const \w+ = (async )?\(" -- <layer dir>`, plus the table, column, endpoint and event names the change touches. Say in the plan which of the two you used.
+1. Find the **code index** (the root `CLAUDE.md` / `AGENTS.md` points to it; in a workspace built by the `workspace-docs` skill it is `docs/code-index/`). It lists every exported function, component, class with its public methods, interface, type, enum and constant of each repo, per directory, with `file:line` and the number of files that import it, plus each repo's declared dependencies.
+2. **Fresh?** `workspace_docs.py status` prints `CODE INDEX behind (N commits)` when the default branch moved; then run `workspace_docs.py code-index --repos <repo>` before you search.
+3. **Search** each verb and noun of the change: `workspace_docs.py symbol <words> [--repo R] [--kind fn|class|type|const|…]` (exact names first), then open the hit at its `file:line`. Search the repos the change calls and the shared libraries too, and read `docs/code-index/<repo>/dependencies.md` before adding a library.
+4. **No index:** propose one (`/workspace-docs code-index`). Until it exists, grep the default branch: `git grep -nE "export (async )?(function|class|const|type|interface|enum) " <ref> -- <layer dir>`, plus the table, column, endpoint and event names the change touches. Say in the plan which of the two you used.
+5. The index describes the default branch: code on open branches is not in it, so also check the open PRs of the repo when a sibling feature is in flight.
 
 ## 2. The questions (one short answer each)
 
@@ -24,3 +27,8 @@ Run it before you write any new method or endpoint, model, provider or repositor
 ## 3. Record the decision
 
 Add a table to the plan: `Need | Existing candidate (path) | Decision: reuse / extend / new | Why`. Ask the user before a "new" that the answers do not justify, and propose the smallest option first (see "Smallest change first" in SKILL.md §2).
+
+## 4. After the change
+
+- New or changed exported symbols reach the index when the branch is merged and the index is regenerated (`refresh`, or `code-index --repos <repo>`); never edit `docs/code-index/` by hand.
+- A new flow or helper that later changes should call instead of copying ("to do X, call Y") goes into the project's hand-written reuse notes (the project recipe the root `CLAUDE.md` points to), with `workspace-docs note`.

@@ -58,6 +58,7 @@ Tell the user: "Context fetched — Jira ticket, Confluence docs, and project st
 - **Target repos.** If `<project_root>` is itself a git repository, it is the target. Otherwise it is a multi-repo workspace: pick the repo(s) the ticket changes from the context block (named repos and paths, the parent epic) and the workspace index the root `CLAUDE.md` points to. Ask the user only when two candidates remain.
 - **Planning standard.** If the root `CLAUDE.md`, or a doc it routes "plan a ticket" / `/implement` to, names a plan standard, pass its absolute path; otherwise `none`.
 - **Open PR and its review.** If the current branch (or the ticket key) already has an open PR, look it up with the project's git-host tools (`/connect-git` sets them up) and fetch every review comment, with its file, line, author and whether it was answered. Pass them to the planner as `open_review`. The plan gives each one a verdict (still applies / gone with the redesign / already covered by `<test>`), and the tasks fix the ones that still apply. Re-planning without them repeats what the reviewer already asked.
+- **Code index.** If `<project_root>/docs/code-index/README.md` exists (built by `/workspace-docs code-index`), run `workspace_docs.py status` and regenerate the target repos' index when it says `CODE INDEX behind` (`workspace_docs.py code-index --repos <repos>`); pass the README path as `code_index`, else `none`. The planner searches it before it lists any new symbol.
 - **plan_dir.** `<project_root>/.claude/plans` for a single repo; in a workspace, the location the planning standard names, else `<first target repo>/.claude/plans`.
 
 ## Step 2 — Generate the plan via `feature-planner` agent
@@ -73,6 +74,7 @@ Values:
   target_repos:       <comma-separated absolute paths from Step 1b>
   planning_standard:  <absolute path, or "none">
   open_review:        <the open PR's review comments from Step 1b, or "none">
+  code_index:         <absolute path of docs/code-index/README.md from Step 1b, or "none">
 
 --- BEGIN JIRA CONTEXT ---
 <paste the full context block verbatim here>
