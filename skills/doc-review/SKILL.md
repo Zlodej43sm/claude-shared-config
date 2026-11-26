@@ -54,7 +54,7 @@ When **writing** or editing a doc, or fixing review comments on one, run `refere
 Missing answers are findings; phrase them as the question a reviewer would ask.
 
 **§F The design holds up** (for design docs and plans):
-- Failure modes: ambiguous failures (timeout after the remote side accepted), crash between two steps, partial success, and what the caller sees in each.
+- Failure modes: ambiguous failures (timeout after the remote side accepted), crash between two steps, partial success, and what the caller sees in each. A list of cases that never get a result is checked against every path where the producer rejects or skips work, and says when no wait or TTL helps.
 - Retries and idempotency: retry policy and limits, success/terminal conditions, idempotency keys, at-least-once vs exactly-once, duplicate starts.
 - Concurrency: several instances, locks or leases, ordering, race between "register" and "done".
 - Data: growth and retention, indexes for every lookup the doc describes, every config knob with a default.
@@ -70,9 +70,10 @@ Missing answers are findings; phrase them as the question a reviewer would ask.
 - A glossary entry is one short sentence of meaning, with no mechanism. Keep it within the project's length cap if it has one.
 
 **§I The change agrees with itself.**
-- Docs, code comments, test names and comments, e2e assertions, config defaults and READMEs in the same change say the same thing. A contradiction is a finding in each place.
+- Docs, code comments, test names and comments, e2e assertions, config defaults and READMEs in the same change say the same thing. A contradiction is a finding in each place. A change that reverses an earlier design choice updates the doc's decisions record (table, ADR) with the reason.
 - A new actor, state or failure the change adds (a second kind of owner, a new status, a delete that orphans rows) is checked against the whole doc and its diagram sources, not only the changed lines. Every rule, table, foreign key and list of exceptions that assumes the old set includes it or says why not.
-- A config default the change turns on matches the rollout order the docs state. If it depends on an unmerged change in another repo, the merge order is written down (PR description, README).
+- A config default the change turns on matches the rollout order the docs state. A rule two docs state (a deploy order in the runbook and in the plan) uses the same words in both; editing one re-reads the other. If it depends on an unmerged change in another repo, the merge order is written down (PR description, README).
+- An example value follows its entity: when the change edits an example id, every doc that shows the same entity (site, session, key) uses the new value. Different entities get different values, and examples use invented values, never real ids copied from logs, tickets or PRs.
 - A test that claims to prove a documented rule fails when the rule breaks. It must not pass because the state is already terminal, a wait returns at once, or the good and bad outcomes look the same.
 
 ## Step 3 — report

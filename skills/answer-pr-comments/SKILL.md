@@ -109,6 +109,8 @@ git fetch -q origin && git rev-list --left-right --count 'HEAD...origin/<source-
 
 The branch name is the PR author's: keep it inside the single quotes, writing each `'` in it as `'\''`, so `$`, backticks or `(…)` in it stay text.
 
+Fix on the source branch as it is. Never merge or rebase the destination (or any other branch) into it, even when the destination moved and its text overlaps the lines you fix: tell the user about the overlap instead. A pushed merge is not undone with `git revert -m 1` (in a stacked PR that deletes the base's changes from the diff); rebuild the branch without it and force-push only after the user agrees.
+
 Read the project `CLAUDE.md` / contributing docs for the checks to run (typecheck, lint, format, tests) and any coding standards, including any review checklist it or the workspace-root `CLAUDE.md` points to (e.g. a DB migration checklist). A fix that touches a migration is re-checked against that checklist item by item, not only against the comment that asked for it. Note the PR's destination branch and whether sibling repositories are checked out next to this one (read-only references, see F2).
 
 ### F1 — Collect

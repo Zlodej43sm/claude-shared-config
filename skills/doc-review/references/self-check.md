@@ -26,7 +26,7 @@ Generic. Run it on every changed doc before each commit, before opening or updat
 ## 5. Does the change agree with itself? (§I)
 - Code comments, test names and comments, e2e assertions, config defaults and READMEs say what the docs say.
 - For each actor, state or failure the change adds, `grep` the whole doc and its diagram sources: every rule, table, foreign key and list of exceptions that assumes the old set includes it or says why not.
-- A config default this change turns on matches the rollout order the docs state. A dependency on an unmerged change in another repo is written as a merge order in the PR description or README.
+- A config default this change turns on matches the rollout order the docs state. A rule stated in two docs uses the same words in both: `grep` the other doc when you edit one. A dependency on an unmerged change in another repo is written as a merge order in the PR description or README.
 - A test that proves a documented rule fails when the rule breaks. Check for a state that is already terminal, a wait that returns at once, or outcomes that look the same.
 
 ## 6. Shown, not narrated? (§B)

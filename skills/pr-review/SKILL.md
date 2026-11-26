@@ -319,7 +319,7 @@ From `.claude/reviews/pr-<PR_ID>.md`, extract every `Cx` finding header and body
 
 - **Inline candidates** — header has `` `path/to/file.py:LINE` `` (explicit line number).
 - **File-only candidates** — header has `` `path/to/file.py` `` with no `:LINE`.
-- **True general candidates** — header has no file path.
+- **True general candidates** — header has no file path. A finding about other repositories (fan-out, leftovers in a sibling repo) is also posted as a general comment, even when its header names a line in this PR.
 
 **Comment body transformation:** post the body alone, in plain text, so it reads like a comment the user wrote: drop the header (`Cx`, path:line, emoji, severity) and the `PR line:` / `PR file:` link line, since the comment already sits on that line; keep `Same pattern:` and `To fix (not in the PR):` links and any `suggestion` block. Strip any meta-framing, bold, headings and "How it can fail" / "Solution proposal" labels.
 
