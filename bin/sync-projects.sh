@@ -18,9 +18,11 @@
 #                (one short model call per project)
 #
 # A project that keeps its own real .claude/{skills,...} directory (e.g. committed
-# to its repo) gets each shared entry linked into it individually; its own
-# same-named entries win. Such a project is only found by the scan once it has at
-# least one of those links — link it the first time with bin/link-project.sh.
+# to its repo) is handled as answered at link-project.sh's prompt (default: each
+# shared entry linked into it individually, its own same-named entries win); a
+# directory not answered for yet gets the prompt here too. Such a project is only
+# found by the scan once it has at least one of those links — link it the first
+# time with bin/link-project.sh.
 set -euo pipefail
 
 SHARED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,7 +40,7 @@ while [ $# -gt 0 ]; do
     --keep-mcp) KEEP_MCP=1 ;;
     --verify) VERIFY=1 ;;
     --scan) [ $# -ge 2 ] || { echo "--scan needs a directory" >&2; exit 2; }; scan_roots+=("$2"); shift ;;
-    -h|--help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) explicit+=("$1") ;;
   esac

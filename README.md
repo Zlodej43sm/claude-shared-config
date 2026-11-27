@@ -25,6 +25,43 @@ safely reuses its own existing symlinks, refuses to overwrite an existing
 an existing, diverged `.claude/settings.json` alone (a project is expected to
 customize its permissions/hooks over time — that's not an error).
 
+### A project that already has its own `.claude/`
+
+If the project already has a real `.claude/skills` (or `agents`, `tools`, `hooks`,
+`workflows`) directory with entries of its own, `link-project.sh` asks what to do
+with it, once per directory:
+
+```
+The project already has its own .claude/skills: 2 entr(ies) — my-own-skill pr-review
+  same name as a shared one: pr-review
+  committed to the project's git repo
+What should happen with the shared skills?
+  1) extend   keep the project's entries and link the shared ones next to them;
+              the project's same-named entries win  (default)
+  2) rewrite  replace .claude/skills with a link to the shared folder
+              (the project's copy is backed up to .backups/<project>/ first)
+              committed, so git will then show its files as deleted
+  3) skip     leave .claude/skills as it is and link nothing into it
+  4) custom   extend, but choose which shared entries to leave out and
+              which same-named project entries the shared version replaces
+Choice [1-4, Enter = extend]:
+```
+
+- **extend** (Enter) never touches the project's files — see the per-entry linking
+  described under [Keeping linked projects up to date](#keeping-linked-projects-up-to-date).
+- **rewrite** asks for a `y` first, copies the directory to
+  `.backups/<project>/claude.<timestamp>/`, then replaces it with a symlink. For a
+  committed directory prefer extend: a `git pull` that changes it brings it back.
+- **custom** lists the shared entries by number; answer with numbers or names
+  (`1 caveman`) to leave some out, then name the same-named entries the shared
+  version should replace (each backed up first).
+
+The answer goes to `.link-choices` (local, gitignored), so re-runs and
+`bin/sync-projects.sh` don't ask again. To change it, run
+`bin/link-project.sh --existing ask <project>`. `--existing extend|rewrite|skip` answers
+for every such directory without asking. With no terminal (piped, CI) and no
+`--existing`, the default (extend) is used, and `--dry-run` previews extend.
+
 ### Keeping linked projects up to date
 
 After pulling changes to this repo (a new shared folder, new MCP servers in
@@ -362,9 +399,9 @@ needs and asks first when the budget is tight.
   auto-detection from `git remote get-url origin`) picks which one the
   PR-related skills use and which git MCP server is enabled. Notion needs no entry by default
   (hosted OAuth server); the commented `NOTION_TOKEN` / `NOTION_MCP=off` switch to an API key or turn it off.
-- `bin/link-project.sh [--refresh-mcp] [--dry-run] <path>` — wires a project to this
-  repo (symlinks, or per-entry links into a project's own real `.claude/<dir>` — see
-  [Keeping linked projects up to date](#keeping-linked-projects-up-to-date) — and
+- `bin/link-project.sh [--refresh-mcp] [--dry-run] [--existing extend|rewrite|skip|ask] <path>` — wires a project to this
+  repo (symlinks, or, for a project's own real `.claude/<dir>`, whatever was chosen at the
+  prompt — see [A project that already has its own `.claude/`](#a-project-that-already-has-its-own-claude) — and
   generates `.mcp.json`), appends to the project's `.gitignore`
   whichever of `.claude/.env`, `.claude/settings.local.json` and `.mcp.json` git doesn't
   ignore yet, and records the project in `.linked-projects`. It refuses to replace
@@ -373,8 +410,9 @@ needs and asks first when the budget is tight.
 - `bin/sync-projects.sh [--dry-run] [--keep-mcp] [--verify] [--scan DIR]... [PROJECT...]` — runs
   `link-project.sh --refresh-mcp` on every linked project; see
   [Keeping linked projects up to date](#keeping-linked-projects-up-to-date).
-- `.linked-projects`, `.backups/` — local, gitignored: the project list and the
-  `.mcp.json` copies replaced by a refresh.
+- `.linked-projects`, `.link-choices`, `.backups/` — local, gitignored: the project list,
+  the answers to the existing-`.claude/` prompt, and the `.mcp.json` copies and
+  `.claude/` directories or entries replaced by a refresh or a rewrite.
 
 ## Skills
 

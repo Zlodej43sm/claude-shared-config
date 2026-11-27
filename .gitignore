@@ -9,6 +9,8 @@ __pycache__/
 /.mcp.json
 /.claude/
 
-# Project list and .mcp.json backups written by bin/link-project.sh / bin/sync-projects.sh
+# Project list, answers to the existing-.claude/ prompt, and backups written by
+# bin/link-project.sh / bin/sync-projects.sh
 /.linked-projects
+/.link-choices
 /.backups/

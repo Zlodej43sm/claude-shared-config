@@ -37,7 +37,7 @@ Generic. Run it before opening a PR and after every push; `backend-review` uses 
 ## 3. Data validity and consistency
 - Business value ranges encoded in the schema (positive amounts, non-empty names, max lengths)? A deleted model check moved into the schema?
 - Ordering keys: their precision known (e.g. timestamps truncated to milliseconds), ties defined, and the same tie rule used in the model and in SQL?
-- Late, duplicated and redelivered messages handled idempotently?
+- Late, duplicated and redelivered messages handled idempotently? An undo after a failed step (cancel, delete, rollback) skips a row an earlier call created?
 - Time-dependent decisions (expiry, windows) taken after the cache read, on raw cached data?
 - Period ends: inclusive or exclusive stated, matching the repo's existing pair, compared the same way everywhere (`<` vs `<=`), stored in a form the column's precision can't round across the boundary?
 - Sync from an external source: absent key clears, malformed value keeps the stored one and is logged, missing target row logged and skipped, only changed rows written with previous and new values logged? External date strings parsed strictly (ISO 8601 with offset)?
