@@ -23,11 +23,11 @@ The reader is the team at stand-up. They want tickets and outcomes, not commits,
 
 ```bash
 eval "$(python3 .claude/tools/env_exports.py)"   # JIRA_WORKSPACE, JIRA_BASE_URL; fine if .claude/.env is absent
-python3 .claude/tools/daily_activity.py [<YYYY-MM-DD | -N | today>] [--repo <path>] [--author <email>]
+python3 .claude/tools/activity.py [<YYYY-MM-DD | -N | today>] [--repo <path>] [--author <email>]
 ```
 
 Pass no date argument when the user gave none, so the fallback to the last active day works. Run the collector once
-per `--repo`. The output schema is in the script's header (`tools/daily_activity.py`). In short:
+per `--repo`. The output schema is in the script's header (`tools/activity.py`, day mode). In short:
 
 - `git.commits`, `git.branches_touched`, `git.reflog` — your commits on all branches, checkouts, rebases and pulls
   on that day.

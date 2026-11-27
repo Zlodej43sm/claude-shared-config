@@ -1,6 +1,6 @@
 ---
 name: demo-recap
-description: Prepare a short demo (2-3 minutes) of what you changed over a period - default the last 7 days - from your git and Claude Code activity, plus any extra source you name. Picks the 1-3 changes a listener would notice, reads their diffs to learn how it worked before and how it works now, and writes a timed speech, before/after pictures as one self-contained HTML page, and, only when it is cheap, a verified local run that shows it working. No ticket numbers. Use when asked for a "weekly demo", "demo of last week", "recap demo", "what did I ship this week as a demo", or "before/after slides" for a period. Writes only the demo folder; never commits or posts. Usage: /demo-recap [last week | since <day> | <from>..<to>] [--repo=<path>]... [--author=<email>] [--source=<file|url>]... [--minutes=<n>] [--no-live] [--out=<dir>]
+description: Prepare a short demo (2-3 minutes) of what you changed over a period - default the last 7 days - from your git and Claude Code activity, plus any extra source you name. Picks the 1-3 changes a listener would notice, reads their diffs to learn how it worked before and how it works now, and writes a timed speech, before/after pictures as one self-contained HTML page, and, only when it is cheap, a verified local run that shows it working. No ticket numbers. Use when asked for a "weekly demo", "demo of last week", "recap demo", "what did I ship this week as a demo", or "before/after slides" for a period. Writes only the demo folder; never commits or posts. Usage: /demo-recap [last week | since <day> | <from>..<to>] [--repo=<path>]... [--author=<email>] [--source=<file|url>]... [--no-jira] [--minutes=<n>] [--no-live] [--out=<dir>]
 ---
 
 # demo-recap — before, what changed, after
@@ -18,6 +18,7 @@ not the commits. One demo covers one period; for a single PR or branch use `demo
 - `--author=<email>`: the git author to match. Default `git config user.email` of the repo.
 - `--source=<file|url>`: extra material for the same period, such as release notes, a changelog or meeting notes.
   Read it as evidence, like the commits. Git and Claude Code activity stay the base.
+- `--no-jira`: skip the Jira lookup.
 - `--minutes=<n>`: speech length, 2 or 3 (default 3).
 - `--no-live`: skip the live run; the pictures carry the demo.
 - `--out=<dir>`: output folder (default below).
@@ -25,20 +26,25 @@ not the commits. One demo covers one period; for a single PR or branch use `demo
 ## Step 1 — collect
 
 ```bash
-python3 .claude/tools/activity_range.py [--from <YYYY-MM-DD>] [--to <YYYY-MM-DD>] [--repo <path>] [--author <email>]
+eval "$(python3 .claude/tools/env_exports.py)"   # JIRA_WORKSPACE, JIRA_BASE_URL; fine if .claude/.env is absent
+python3 .claude/tools/activity.py --from <YYYY-MM-DD> --to <YYYY-MM-DD> [--repo <path>] [--author <email>]
 ```
 
-Run it once per `--repo`. The output schema is in the script's header (`tools/activity_range.py`): your commits
-(oldest first, with date and size), the branches touched, and the Claude Code sessions with their dates, titles,
-files edited, done and open todos, and last reply. Exit `1` means a bad date or not a git repo: say so in one line
-and stop. If `totals.commits` and `totals.sessions` are both `0`, say the period is empty, suggest a wider range
-or `--author`, and stop.
+Run it once per `--repo`. The output schema is in the script's header (`tools/activity.py`, range mode):
+`git.commits` (oldest first, with date and size), `git.branches_touched`, `claude.sessions` with their dates,
+titles, files edited, done and open todos and last reply, `totals`, `now` (unpushed and uncommitted work) and
+`tickets`. Exit `1` means a bad date or not a git repo: say so in one line and stop. If `totals.commits` and
+`totals.sessions` are both `0`, say the period is empty, suggest a wider range or `--author`, and stop.
 
 Prompts and replies are evidence only. Never quote them: they can hold pasted messages, customer data or secrets.
 
+Unless `--no-jira`, look up the summary of each key in `tickets` as in `daily-status` → Step 2. The summaries
+tell you what each change was for; the keys themselves never reach the output.
+
 ## Step 2 — pick the highlights
 
-1. Group the commits and sessions into changes: same branch, same files, or one session title.
+1. Group the commits and sessions into changes with the rule in `daily-status` → Step 3 (first paragraph).
+   Work with no ticket is grouped by branch, shared files or session title.
 2. Keep 1 to 3 changes a listener would notice, in this order: a new capability, then changed behaviour, then a
    fix someone felt. Drop formatting, renames, dependency bumps, tooling-only work and one-off questions. Three
    minutes holds three highlights at most; with fewer, give each more time.
@@ -71,7 +77,8 @@ bold cue in brackets naming the slide or the live step (`**[Slide 2: Before / af
 
 - **Opening** (15 seconds): the period and what the audience will see.
 - **Per highlight**: how it worked before, what changed, how it works now, why it matters. Point at the boxes.
-- **Close** (15 seconds): what comes next, only from evidence (open todos, unpushed work); else leave it out.
+- **Close** (15 seconds): what comes next, only from evidence (`open_todos`, `now.unpushed`, `now.uncommitted`);
+  else leave it out.
 
 Plain English for non-native speakers: short sentences, active voice, no jargon a product person would not know.
 

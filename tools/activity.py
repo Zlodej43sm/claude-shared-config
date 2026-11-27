@@ -1,19 +1,33 @@
 #!/usr/bin/env python3
 """
-daily_activity — collect one day of your git and Claude Code activity in a repo,
-as raw material for a daily status (the `daily-status` skill).
+activity — collect your git and Claude Code activity in a repo, for one day (day mode,
+the `daily-status` skill) or over a date range (range mode, the `demo-recap` skill).
 
 SCHEMA_IN
-  argv  [DATE]          yesterday (default) | today | -N (N days ago) | YYYY-MM-DD
+  argv  [DATE]          day mode: yesterday (default) | today | -N (N days ago) | YYYY-MM-DD
+        --from DATE     range mode, first day, inclusive (default: 6 days before --to)
+        --to DATE       range mode, last day, inclusive (default today)
+                        Either flag turns range mode on; it cannot be combined with [DATE].
         --repo PATH     repo to report on (default: git top level of the cwd)
         --author TEXT   git author to match (default: `git config user.email`)
-        --lookback N    when DATE was not given and that day has no activity, step back
-                        up to N days to the last day that has some (default 7; 0 = off)
-        --max-prompts N prompts kept per session (default 15)
+        --lookback N    day mode: when DATE was not given and that day has no activity, step
+                        back up to N days to the last day that has some (default 7; 0 = off)
+        --max-prompts N prompts kept per session and day (default 15 day mode, 5 range mode)
   env   JIRA_WORKSPACE  optional Jira project key; with it, lower-case keys in branch names
                         are read only for this project (feature/more-123-x -> MORE-123)
 
-SCHEMA_OUT  stdout JSON
+SCHEMA_OUT (range mode)  stdout JSON, oldest first
+  { "repo", "author", "from", "to", "active_days": [YYYY-MM-DD],
+    "git":    {"commits": [{date, time, sha, subject, body, refs, files_changed, insertions,
+                            deletions}], "branches_touched": [names]},
+    "claude": {"sessions": [{id, title, dates: [YYYY-MM-DD], branches, prompts, commands,
+                             files_edited, open_todos (latest day), done_todos, last_reply,
+                             started_in}]},
+    "totals": {commits, sessions, files_changed, insertions, deletions},
+    "now":    {branch, uncommitted, unpushed, recent_branches, recent_plans},
+    "tickets" }                                 (fields as in day mode)
+
+SCHEMA_OUT (day mode)  stdout JSON
   { "repo", "author", "requested_date", "date", "fell_back": bool,
     "git": {
       "commits":  [{sha, time, subject, body, refs, files_changed, insertions, deletions}],
@@ -35,7 +49,7 @@ SCHEMA_OUT  stdout JSON
   Times are local. Text fields are truncated. Read-only: runs git and reads
   ~/.claude/projects/*.jsonl; writes nothing.
 
-EXIT  0=ok  1=bad args / not a git repo
+EXIT  0=ok  1=bad args / not a git repo / --from after --to
 """
 from __future__ import annotations
 
@@ -368,14 +382,56 @@ def collect(repo: str, author: str, day: dt.date, max_prompts: int) -> dict:
             "claude": {"sessions": read_sessions(repo, start, end, max_prompts)}}
 
 
+def merge_session(into: dict, s: dict, day: str, max_prompts: int) -> None:
+    """Fold one day of a session that spans several days into its range entry."""
+    into["dates"].append(day)
+    into["title"] = s["title"] or into["title"]
+    for key in ("branches", "commands", "files_edited"):
+        into[key] += [v for v in s[key] if v not in into[key]]
+    into["prompts"] += s["prompts"][:max(max_prompts * 3 - len(into["prompts"]), 0)]
+    into["done_todos"] += [t for t in s["done_todos"] if t not in into["done_todos"]]
+    into["open_todos"] = s["open_todos"]  # the latest day's list is the current one
+    into["last_reply"] = s["last_reply"] or into["last_reply"]
+
+
+def collect_range(repo: str, author: str, first: dt.date, last: dt.date, max_prompts: int) -> dict:
+    commits, branches, sessions, active = [], {}, {}, []
+    day = first
+    while day <= last:
+        r, iso = collect(repo, author, day, max_prompts), day.isoformat()
+        if r["git"]["commits"] or r["claude"]["sessions"]:
+            active.append(iso)
+        commits += [{"date": iso, **c} for c in reversed(r["git"]["commits"])]  # oldest first
+        branches.update(dict.fromkeys(r["git"]["branches_touched"]))
+        for s in r["claude"]["sessions"]:
+            if s["id"] in sessions:
+                merge_session(sessions[s["id"]], s, iso, max_prompts)
+            else:
+                sessions[s["id"]] = {**{k: v for k, v in s.items() if k not in ("start", "end")},
+                                     "dates": [iso]}
+        day += dt.timedelta(days=1)
+    return {"from": first.isoformat(), "to": last.isoformat(), "active_days": active,
+            "git": {"commits": commits, "branches_touched": list(branches)},
+            "claude": {"sessions": list(sessions.values())},
+            "totals": {"commits": len(commits), "sessions": len(sessions),
+                       **{k: sum(c[k] for c in commits)
+                          for k in ("files_changed", "insertions", "deletions")}}}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("date", nargs="?")
+    ap.add_argument("--from", dest="first")
+    ap.add_argument("--to", dest="last")
     ap.add_argument("--repo")
     ap.add_argument("--author")
     ap.add_argument("--lookback", type=int, default=7)
-    ap.add_argument("--max-prompts", type=int, default=15)
+    ap.add_argument("--max-prompts", type=int)
     a = ap.parse_args()
+    range_mode = bool(a.first or a.last)
+    if range_mode and a.date:
+        sys.stderr.write("ERROR: give a DATE or --from/--to, not both\n")
+        return 1
 
     repo = run(["git", "rev-parse", "--show-toplevel"], a.repo or os.getcwd()).strip()
     if not repo:
@@ -385,6 +441,25 @@ def main() -> int:
     author = a.author or run(["git", "config", "user.email"], repo).strip() \
         or run(["git", "config", "user.name"], repo).strip()
     today = dt.date.today()
+    workspace = os.environ.get("JIRA_WORKSPACE", "").strip().upper()
+
+    if range_mode:
+        last = parse_date(a.last or "today", today)
+        first = parse_date(a.first, today) if a.first else last - dt.timedelta(days=6)
+        if first > last:
+            sys.stderr.write(f"ERROR: --from {first} is after --to {last}\n")
+            return 1
+        out = {"repo": repo, "author": author,
+               **collect_range(repo, author, first, last, a.max_prompts or 5)}
+        now = git_now(repo, author, day_bounds(last)[1])
+        now.pop("since_commits")
+        out["now"] = now
+        out["tickets"] = find_tickets(out, workspace)
+        json.dump(out, sys.stdout, ensure_ascii=False, indent=1)
+        print()
+        return 0
+
+    a.max_prompts = a.max_prompts or 15
     requested = parse_date(a.date, today)
 
     day, report = requested, collect(repo, author, requested, a.max_prompts)
@@ -406,7 +481,7 @@ def main() -> int:
 
     out = {"repo": repo, "author": author, "requested_date": requested.isoformat(),
            "date": day.isoformat(), "fell_back": day != requested, **report, "now": now}
-    out["tickets"] = find_tickets(out, os.environ.get("JIRA_WORKSPACE", "").strip().upper())
+    out["tickets"] = find_tickets(out, workspace)
     json.dump(out, sys.stdout, ensure_ascii=False, indent=1)
     print()
     return 0
