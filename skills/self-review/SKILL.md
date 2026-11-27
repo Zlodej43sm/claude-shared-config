@@ -27,6 +27,7 @@ For every new type, constant, helper, error value, regex, message and doc senten
 - A type equal to an existing one (`Pick<X, …>` naming every member of `X` is `X`).
 - A constant, doc string or response block copied from an untouched file: move it to one shared place and import it in both. The copy is the change's, so the move is in scope.
 - A test value copied from config or env defaults: read it from the test env.
+- A fact the change states in one doc surface (README, API spec text, catalog, runbook) is in every surface that documents the same route or flow, in the same words; added doc lines follow the project's width rule.
 - Duplicates that existed before the change go to the report, not the diff.
 
 ## Step 4 — inventory and the extra
