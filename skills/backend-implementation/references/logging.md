@@ -34,9 +34,14 @@ Logs serve three jobs: detect unexpected situations (alerts), debug one error, a
 | WARN | abnormal, must be monitored | a consumer job retried after an error |
 | ERROR | broken, must be fixed | an action failed because a dependency failed |
 
+## Alerts: a log someone must act on
+- A new WARN or ERROR that means a person must act (an unknown value from a third party, config drift, a skipped record) is only useful if someone is told. Before you push, check that a monitor watches it, or add one in the same task, following the project's alerting guideline (linked from its coding-standards docs). If you decide no alert is needed, say why in the PR text.
+- A WARN nobody watches is noise: raise it to an alert, or lower it to INFO.
+
 ## Pre-push check
 - [ ] No `console.log`; no whole object or payload as fields; no secrets or personal data.
 - [ ] Errors thrown with static message, `info` with all inputs, `cause`; no extra error log next to them.
 - [ ] Every caught error turned into a normal answer (`null`, empty list) logs one INFO line with its lookup key.
+- [ ] Every new WARN/ERROR that someone must act on has a monitor (same task, per the project's alerting guideline), or the PR says why not.
 - [ ] Context via logger fields / child logger, not context-only log lines.
 - [ ] No duplicate of an automatic framework log; level matches the table.
